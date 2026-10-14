@@ -1,6 +1,3 @@
-PyMuPDF>=1.24
-requests>=2.32
-urllib3>=2.2
-python-dotenv>=1.0
-cryptography>=43.0
-pydantic>=2.8
+# Les dépendances sont déclarées dans pyproject.toml.
+# Installe le projet en mode éditable + les outils de développement (pytest, ruff).
+-e .[dev]

@@ -293,9 +293,7 @@ class LaBonneAlternanceSource(CompanySource):
             naf_code=naf.get("code") if isinstance(naf, dict) else None,
             address=location.get("address"),
             location=(
-                GeoPoint(longitude=coordinates[0], latitude=coordinates[1])
-                if len(coordinates) == 2
-                else None
+                GeoPoint(longitude=coordinates[0], latitude=coordinates[1]) if len(coordinates) == 2 else None
             ),
             headcount=workplace.get("size"),
             website=workplace.get("website"),
@@ -488,9 +486,7 @@ def find_companies(
 ) -> list[Company]:
     """Raccourci : entreprises d'un domaine métier autour d'une ville."""
     with SourcingEngine(settings) as engine:
-        return engine.find(
-            domain, city, client_id=client_id, radius_km=radius_km, max_results=max_results
-        )
+        return engine.find(domain, city, client_id=client_id, radius_km=radius_km, max_results=max_results)
 
 
 __all__: Sequence[str] = (

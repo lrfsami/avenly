@@ -89,11 +89,7 @@ def get_settings(env_file: Path | None = None) -> Settings:
     """
     load_dotenv(env_file or PROJECT_ROOT / ".env", override=False)
 
-    raw = {
-        name: os.environ[name.upper()]
-        for name in Settings.model_fields
-        if name.upper() in os.environ
-    }
+    raw = {name: os.environ[name.upper()] for name in Settings.model_fields if name.upper() in os.environ}
     try:
         return Settings(**raw)
     except ValidationError as exc:

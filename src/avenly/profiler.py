@@ -122,9 +122,7 @@ def _clean(text: str) -> str:
     """
     text = unicodedata.normalize("NFKC", text)  # ligatures « ﬁ » -> « fi », etc.
     text = "".join(
-        ch
-        for ch in text
-        if ch in "\n\t" or unicodedata.category(ch) not in ("Cc", "Cf", "Co", "Cs")
+        ch for ch in text if ch in "\n\t" or unicodedata.category(ch) not in ("Cc", "Cf", "Co", "Cs")
     )
     text = _MULTI_SPACES.sub(" ", text)
     text = "\n".join(line.strip() for line in text.split("\n"))

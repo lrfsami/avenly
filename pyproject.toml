@@ -1,0 +1,57 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "avenly"
+version = "0.1.0"
+description = "Moteur Python qui automatise l'accès au marché caché de l'alternance."
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [{ name = "Sami Laarfi" }]
+dependencies = [
+    "PyMuPDF>=1.24",
+    "requests>=2.32",
+    "urllib3>=2.2",
+    "python-dotenv>=1.0",
+    "cryptography>=43.0",
+    "pydantic>=2.8",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.6",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+# --------------------------------------------------------------------------
+# Tests
+# --------------------------------------------------------------------------
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra -m 'not network'"
+markers = [
+    "network: appelle les vraies APIs (lancer avec : pytest -m network)",
+]
+filterwarnings = [
+    # Avertissements internes de PyMuPDF (bindings SWIG), sans rapport avec notre code.
+    "ignore:builtin type .* has no __module__ attribute:DeprecationWarning",
+]
+
+# --------------------------------------------------------------------------
+# Lint (ruff) — inclut les règles de sécurité Bandit (S)
+# --------------------------------------------------------------------------
+[tool.ruff]
+line-length = 110
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "S", "SIM", "RUF"]
+ignore = ["RUF001", "RUF002", "RUF003"]  # caractères typographiques français (’, «, ») voulus
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "S105", "S106"]  # assert et faux secrets autorisés dans les tests
