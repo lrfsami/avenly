@@ -1,0 +1,145 @@
+# Avenly
+
+**Your future starts in the hidden job market.**
+
+Avenly is a Python engine that automates access to the **hidden apprenticeship market** (*alternance*, the French work-study system): it identifies companies that hire apprentices without posting job offers, analyzes the candidate's résumé without ever exposing personal data, and prepares targeted unsolicited applications.
+
+![Python](https://img.shields.io/badge/python-3.11%2B-3776AB?logo=python&logoColor=white)
+![Tests](https://img.shields.io/badge/tests-pytest-0A9EDC?logo=pytest&logoColor=white)
+![Lint](https://img.shields.io/badge/lint-ruff%20%2B%20bandit-D7FF64?logo=ruff&logoColor=black)
+![Status](https://img.shields.io/badge/status-in%20development-orange)
+
+[🇫🇷 Français](README.md) · 🇬🇧 English
+
+---
+
+## The problem
+
+A large share of apprenticeship contracts is **never posted** as a job offer: companies hire through referrals, unsolicited applications or their own network. Meanwhile, students all apply to the same visible offers, and companies that take on apprentices without advertising it stay off the radar.
+
+## The solution
+
+Avenly combines **French government public APIs** to map this hidden market, then automates personalized outreach.
+
+```mermaid
+flowchart LR
+    CV[PDF résumé] --> P[Profiler<br/>secure parsing<br/>+ anonymization]
+    P --> LLM[LLM<br/>structured profile]
+    S[Sourcing<br/>La Bonne Alternance<br/>+ Recherche d'entreprises] --> E[Enrichment<br/>website + contact]
+    LLM --> G[Generation<br/>personalized email]
+    E --> G
+    G --> SEND[Drip<br/>sending]
+```
+
+| Module | Role | Status |
+|---|---|---|
+| `profiler.py` | Secure résumé parsing and anonymization | ✅ |
+| `sourcing.py` | Company targeting by field and location | ✅ |
+| `security.py` | Encryption and personal data anonymization | ✅ |
+| LLM → JSON profile | Skills and experience extraction | 🚧 |
+| `enricher.py` | Website context and recruiter contact | 🚧 |
+| `sender.py` | Email drafting (under 120 words) and sending | 🚧 |
+
+## Security by design
+
+Avenly handles résumés: data protection is not an afterthought, it shapes the code.
+
+- **No personal data sent to LLMs.** Emails, phone numbers (French and international formats), postal addresses and the candidate's name are replaced with `[CONFIDENTIEL]` before any external processing.
+- **In-memory résumé processing only.** The PDF is read through `io.BytesIO`; no copy is ever written to disk.
+- **Strict file validation.** `%PDF-` magic bytes checked (the extension proves nothing), size and page count limited, encrypted or corrupted PDFs rejected.
+- **Resistance to malicious content.** Bounded-quantifier regexes (ReDoS protection) and removal of invisible Unicode characters, often used to hide prompt injections.
+- **Symmetric encryption.** Sensitive data encrypted with Fernet (AES-128-CBC + HMAC-SHA256), key stored outside the code.
+- **Secrets never exposed.** Keys and tokens typed as `SecretStr`: masked in logs, `print` output and even configuration error messages.
+- **Sanitized external data.** URLs filtered (`javascript:`, `file:`, `localhost` and IPs rejected, groundwork for SSRF protection), control characters stripped, SIRET and NAF codes validated.
+- **GDPR compliance.** Companies with restricted visibility in the SIRENE registry are excluded, and executives' personal data returned by the API is never read.
+- **Controlled network calls.** Timeouts, retries with backoff, per-API rate limiting and bounded response size.
+- **Static analysis.** The `ruff` linter includes Bandit security rules.
+
+## Architecture
+
+```
+src/avenly/
+├── config.py     # Typed, validated configuration (.env), masked secrets
+├── models.py     # Shared Pydantic models (Company, GeoPoint)
+├── security.py   # Fernet encryption + personal data anonymization
+├── profiler.py   # Secure in-memory PDF résumé parsing
+└── sourcing.py   # HTTP client, geocoding, company sources, SIRET-based merge
+tests/            # pytest suite, mocked APIs (no network calls by default)
+```
+
+Design choices:
+
+- **The engine is interface-agnostic.** The same code will power the command-line script and later a FastAPI backend.
+- **Company sources share a common interface** (`CompanySource`): adding a source means adding a class.
+- **Multi-tenant from day one.** Every object carries a `client_id`, anticipating a B2B offer for training centers.
+- **SIRET (French company ID) is the unique key**: it deduplicates results across sources and will later prevent contacting the same company twice.
+
+## Installation
+
+```bash
+git clone https://github.com/lrfsami/avenly.git
+cd avenly
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env
+```
+
+Generate an encryption key and paste it into `.env` (`FERNET_KEY=...`):
+
+```bash
+python -m avenly.security
+```
+
+To enable La Bonne Alternance, request a token at [api.apprentissage.beta.gouv.fr](https://api.apprentissage.beta.gouv.fr) and set `LBA_API_TOKEN`. Without a token, only the Recherche d'entreprises API is used.
+
+## Usage
+
+```python
+from avenly.profiler import read_cv
+from avenly.sourcing import find_companies
+
+cv = read_cv("data/my_resume.pdf", candidate_names=["First Last"])
+print(cv.text)  # anonymized text, ready for an LLM
+
+companies = find_companies("informatique", "Lyon", client_id="me", radius_km=20)
+for company in companies[:10]:
+    print(company.name, company.siret, company.address)
+```
+
+Available fields: `informatique` (IT), `marketing`, `comptabilite` (accounting), `rh` (HR).
+
+## Tests
+
+```bash
+pytest               # fast tests, no network
+pytest -m network    # tests against the real APIs
+ruff check .         # lint and security rules
+```
+
+## Roadmap
+
+**Month 1: the engine**
+- [x] Configuration, encryption, anonymization
+- [x] Secure résumé parsing
+- [x] Multi-API sourcing with SIRET-based merge
+- [ ] LLM profile extraction (Pydantic-validated JSON)
+- [ ] Enrichment: website and contact
+- [ ] Email generation and SMTP sending
+- [ ] Command-line interface
+
+**Month 2: automated sending**
+- [ ] Sending history in a database (no duplicate contact)
+- [ ] Queue with spaced-out sending
+- [ ] Gmail / Outlook OAuth2 login
+
+**Month 3: the product**
+- [ ] FastAPI backend
+- [ ] Web dashboard
+- [ ] Training-center workspace to follow multiple students
+
+## Author
+
+**Sami Laarfi** · [@lrfsami](https://github.com/lrfsami)
+
+© 2026 Sami Laarfi. All rights reserved.
