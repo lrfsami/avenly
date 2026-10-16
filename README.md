@@ -5,7 +5,7 @@
 Avenly est un moteur Python qui automatise l'accès au **marché caché de l'alternance** : il identifie les entreprises qui recrutent sans publier d'offre, analyse le CV du candidat sans jamais exposer ses données personnelles, et prépare des candidatures spontanées ciblées.
 
 ![Python](https://img.shields.io/badge/python-3.11%2B-3776AB?logo=python&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-pytest-0A9EDC?logo=pytest&logoColor=white)
+[![CI](https://github.com/lrfsami/avenly/actions/workflows/ci.yml/badge.svg)](https://github.com/lrfsami/avenly/actions/workflows/ci.yml)
 ![Lint](https://img.shields.io/badge/lint-ruff%20%2B%20bandit-D7FF64?logo=ruff&logoColor=black)
 ![Status](https://img.shields.io/badge/statut-en%20d%C3%A9veloppement-orange)
 
@@ -53,6 +53,8 @@ Avenly manipule des CV : la protection des données n'est pas une option ajouté
 - **Données externes assainies.** URLs filtrées (`javascript:`, `file:`, `localhost` et IP rejetés, base d'une future protection SSRF), caractères de contrôle supprimés, SIRET et codes NAF validés.
 - **Respect du RGPD.** Les entreprises en diffusion restreinte dans SIRENE sont exclues, et les données personnelles des dirigeants renvoyées par l'API ne sont jamais lues.
 - **Appels réseau maîtrisés.** Timeouts, relances avec backoff, limitation de débit par API et taille de réponse bornée.
+- **Aucun secret dans le code.** `gitleaks` bloque tout commit contenant une clé ou un jeton, en local (hook pre-commit) et dans la CI sur tout l'historique.
+- **CI sécurisée.** GitHub Actions avec permissions minimales et actions épinglées par SHA de commit.
 - **Analyse statique.** Le lint `ruff` inclut les règles de sécurité Bandit.
 
 ## Architecture
@@ -83,6 +85,7 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
+pre-commit install   # contrôles automatiques avant chaque commit (secrets, lint)
 ```
 
 Générer une clé de chiffrement et la coller dans `.env` (`FERNET_KEY=...`) :
@@ -107,7 +110,7 @@ for company in companies[:10]:
     print(company.name, company.siret, company.address)
 ```
 
-Domaines disponibles : `informatique`, `marketing`, `comptabilite`, `rh`.
+Domaines disponibles : `informatique`, `data`, `marketing`, `comptabilite`, `rh`.
 
 ## Tests
 
@@ -115,6 +118,7 @@ Domaines disponibles : `informatique`, `marketing`, `comptabilite`, `rh`.
 pytest               # tests rapides, sans réseau
 pytest -m network    # tests contre les vraies APIs
 ruff check .         # lint et règles de sécurité
+pre-commit run --all-files  # tous les contrôles, dont la détection de secrets
 ```
 
 ## Feuille de route

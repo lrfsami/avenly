@@ -5,7 +5,7 @@
 Avenly is a Python engine that automates access to the **hidden apprenticeship market** (*alternance*, the French work-study system): it identifies companies that hire apprentices without posting job offers, analyzes the candidate's résumé without ever exposing personal data, and prepares targeted unsolicited applications.
 
 ![Python](https://img.shields.io/badge/python-3.11%2B-3776AB?logo=python&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-pytest-0A9EDC?logo=pytest&logoColor=white)
+[![CI](https://github.com/lrfsami/avenly/actions/workflows/ci.yml/badge.svg)](https://github.com/lrfsami/avenly/actions/workflows/ci.yml)
 ![Lint](https://img.shields.io/badge/lint-ruff%20%2B%20bandit-D7FF64?logo=ruff&logoColor=black)
 ![Status](https://img.shields.io/badge/status-in%20development-orange)
 
@@ -53,6 +53,8 @@ Avenly handles résumés: data protection is not an afterthought, it shapes the 
 - **Sanitized external data.** URLs filtered (`javascript:`, `file:`, `localhost` and IPs rejected, groundwork for SSRF protection), control characters stripped, SIRET and NAF codes validated.
 - **GDPR compliance.** Companies with restricted visibility in the SIRENE registry are excluded, and executives' personal data returned by the API is never read.
 - **Controlled network calls.** Timeouts, retries with backoff, per-API rate limiting and bounded response size.
+- **No secrets in code.** `gitleaks` blocks any commit containing a key or token, locally (pre-commit hook) and in CI across the full history.
+- **Hardened CI.** GitHub Actions with least-privilege permissions and actions pinned by commit SHA.
 - **Static analysis.** The `ruff` linter includes Bandit security rules.
 
 ## Architecture
@@ -83,6 +85,7 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
+pre-commit install   # automatic checks before each commit (secrets, lint)
 ```
 
 Generate an encryption key and paste it into `.env` (`FERNET_KEY=...`):
@@ -107,7 +110,7 @@ for company in companies[:10]:
     print(company.name, company.siret, company.address)
 ```
 
-Available fields: `informatique` (IT), `marketing`, `comptabilite` (accounting), `rh` (HR).
+Available fields: `informatique` (IT), `data` (data / AI), `marketing`, `comptabilite` (accounting), `rh` (HR).
 
 ## Tests
 
@@ -115,6 +118,7 @@ Available fields: `informatique` (IT), `marketing`, `comptabilite` (accounting),
 pytest               # fast tests, no network
 pytest -m network    # tests against the real APIs
 ruff check .         # lint and security rules
+pre-commit run --all-files  # all checks, including secret detection
 ```
 
 ## Roadmap

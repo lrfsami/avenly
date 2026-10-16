@@ -1,0 +1,22 @@
+# Vérifications lancées automatiquement à chaque `git commit`.
+# Installation (une fois) : pre-commit install
+repos:
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.1
+    hooks:
+      - id: gitleaks # bloque le commit si un secret (clé API, token…) est détecté
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.17.0
+    hooks:
+      - id: ruff-check
+      - id: ruff-format
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-added-large-files # évite de commiter un CV ou un export par erreur
+        args: ["--maxkb=500"]
+      - id: check-merge-conflict
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
