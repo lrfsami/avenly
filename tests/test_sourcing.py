@@ -401,3 +401,15 @@ def test_live_recherche_entreprises():
     companies = find_companies("informatique", "Lyon", client_id="test", radius_km=10, max_results=30)
     assert len(companies) == 30
     assert len({c.siret for c in companies}) == 30
+
+
+def test_data_domain_targets_data_jobs():
+    data = get_domain("data")
+    assert {"M1419", "M1405", "M1811"} <= set(data.romes)
+    make_query(romes=data.romes, naf_codes=data.naf_codes)  # codes valides
+
+
+@pytest.mark.network
+def test_live_data_domain():
+    companies = find_companies("data", "Lyon", client_id="test", radius_km=10, max_results=20)
+    assert len(companies) == 20

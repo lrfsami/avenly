@@ -64,6 +64,13 @@ DOMAINS: dict[str, Domain] = {
         romes=("M1805", "M1810", "M1802", "M1806"),
         naf_codes=("62.01Z", "62.02A", "62.03Z", "62.09Z", "63.11Z", "58.29C"),
     ),
+    "data": Domain(
+        "Data / IA",
+        # Data analyst (M1419), data scientist (M1405), data engineer (M1811), développement (M1805)
+        romes=("M1419", "M1405", "M1811", "M1805"),
+        # Conseil et services numériques, traitement de données, études de marché, conseil en gestion
+        naf_codes=("62.01Z", "62.02A", "62.03Z", "63.11Z", "63.12Z", "73.20Z", "70.22Z"),
+    ),
     "marketing": Domain(
         "Marketing / Communication",
         romes=("M1705", "E1103", "E1101"),
