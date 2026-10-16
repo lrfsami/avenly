@@ -32,6 +32,7 @@ from urllib3.util.retry import Retry
 
 from avenly.config import Settings, get_settings
 from avenly.models import Company, GeoPoint
+from avenly.storage import Database
 
 logger = logging.getLogger(__name__)
 
@@ -397,8 +398,9 @@ class SourcingEngine:
     # La Bonne Alternance : 60 appels/minute documentés.
     LBA_RATE_PER_SECOND = 1.0
 
-    def __init__(self, settings: Settings | None = None) -> None:
+    def __init__(self, settings: Settings | None = None, *, database: Database | None = None) -> None:
         self._settings = settings or get_settings()
+        self.database = database
         s = self._settings
         self._clients: list[ApiClient] = []
 
@@ -445,7 +447,8 @@ class SourcingEngine:
         radius_km: float = 20,
         max_results: int = 100,
     ) -> list[Company]:
-        target = get_domain(domain)
+        domain_key = domain.strip().lower()
+        target = get_domain(domain_key)
         query = SearchQuery(
             client_id=client_id,
             location=self.geocoder.locate(city),
@@ -454,7 +457,22 @@ class SourcingEngine:
             naf_codes=target.naf_codes,
             max_results=max_results,
         )
-        return self.search(query)
+        if self.database is None:
+            return self.search(query)
+
+        companies = self.database.find_cached(
+            domain_key, query.location, radius_km, client_id=client_id, max_results=max_results
+        )
+        if companies is not None:
+            logger.info("Recherche servie depuis la base : %d établissements.", len(companies))
+        else:
+            companies = self.search(query)
+            self.database.save_search(
+                domain_key, query.location, radius_km, companies, requested_max=max_results
+            )
+        # Les entreprises qui ont demandé à ne plus être contactées sont exclues pour tous.
+        opted_out = self.database.opted_out_sirens(c.siren for c in companies)
+        return rank_companies(c for c in companies if c.siren not in opted_out)[:max_results]
 
     def search(self, query: SearchQuery) -> list[Company]:
         merged: dict[str, Company] = {}
@@ -474,12 +492,12 @@ class SourcingEngine:
         if failures == len(self.sources):
             raise SourcingError("Toutes les sources ont échoué.")
 
-        # Marché caché d'abord : les recruteurs La Bonne Alternance en tête.
-        ranked = sorted(
-            merged.values(),
-            key=lambda c: (LaBonneAlternanceSource.name not in c.sources, c.name.lower()),
-        )
-        return ranked[: query.max_results]
+        return rank_companies(merged.values())[: query.max_results]
+
+
+def rank_companies(companies: Iterable[Company]) -> list[Company]:
+    """Marché caché d'abord : les recruteurs La Bonne Alternance en tête, puis par nom."""
+    return sorted(companies, key=lambda c: (LaBonneAlternanceSource.name not in c.sources, c.name.lower()))
 
 
 def find_companies(
@@ -490,9 +508,14 @@ def find_companies(
     radius_km: float = 20,
     max_results: int = 100,
     settings: Settings | None = None,
+    database: Database | None = None,
 ) -> list[Company]:
-    """Raccourci : entreprises d'un domaine métier autour d'une ville."""
-    with SourcingEngine(settings) as engine:
+    """Raccourci : entreprises d'un domaine métier autour d'une ville.
+
+    Avec `database`, les recherches récentes sont resservies depuis la base et
+    les entreprises en opposition sont exclues.
+    """
+    with SourcingEngine(settings, database=database) as engine:
         return engine.find(domain, city, client_id=client_id, radius_km=radius_km, max_results=max_results)
 
 
@@ -508,4 +531,5 @@ __all__: Sequence[str] = (
     "SourcingError",
     "find_companies",
     "get_domain",
+    "rank_companies",
 )

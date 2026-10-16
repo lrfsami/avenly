@@ -16,6 +16,7 @@ dependencies = [
     "python-dotenv>=1.0",
     "cryptography>=43.0",
     "pydantic>=2.8",
+    "SQLAlchemy>=2.0",
 ]
 
 [project.optional-dependencies]

@@ -52,7 +52,22 @@ class Settings(BaseModel):
 
     max_cv_size_mb: int = Field(default=5, gt=0, le=20)
 
+    # Base de données : SQLite local par défaut (dans data/, ignoré par Git).
+    # SecretStr : une URL PostgreSQL contient un mot de passe.
+    database_url: SecretStr = SecretStr(f"sqlite:///{DATA_DIR / 'avenly.db'}")
+    # Une recherche (domaine + zone) est resservie depuis la base pendant N jours (0 = désactivé).
+    sourcing_cache_days: int = Field(default=30, ge=0, le=365)
+    # Nombre maximal de candidatures Avenly vers une même entreprise sur 30 jours, tous clients confondus.
+    max_applications_per_company: int = Field(default=2, ge=1, le=20)
+
     log_level: LogLevel = "INFO"
+
+    @field_validator("database_url")
+    @classmethod
+    def _supported_database(cls, value: SecretStr) -> SecretStr:
+        if not value.get_secret_value().startswith(("sqlite://", "postgresql://", "postgresql+psycopg://")):
+            raise ValueError("seuls SQLite et PostgreSQL sont supportés")
+        return value
 
     @field_validator("fernet_key", "lba_api_token", mode="before")
     @classmethod
@@ -89,7 +104,12 @@ def get_settings(env_file: Path | None = None) -> Settings:
     """
     load_dotenv(env_file or PROJECT_ROOT / ".env", override=False)
 
-    raw = {name: os.environ[name.upper()] for name in Settings.model_fields if name.upper() in os.environ}
+    # Une variable vide (ex. « DATABASE_URL= ») garde sa valeur par défaut.
+    raw = {
+        name: os.environ[name.upper()]
+        for name in Settings.model_fields
+        if os.environ.get(name.upper(), "").strip()
+    }
     try:
         return Settings(**raw)
     except ValidationError as exc:

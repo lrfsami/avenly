@@ -36,6 +36,7 @@ flowchart LR
 | `profiler.py` | Secure résumé parsing and anonymization | ✅ |
 | `sourcing.py` | Company targeting by field and location | ✅ |
 | `security.py` | Encryption and personal data anonymization | ✅ |
+| `storage.py` | Shared company catalogue, application history, opt-out list | ✅ |
 | LLM → JSON profile | Skills and experience extraction | 🚧 |
 | `enricher.py` | Website context and recruiter contact | 🚧 |
 | `sender.py` | Email drafting (under 120 words) and sending | 🚧 |
@@ -65,7 +66,8 @@ src/avenly/
 ├── models.py     # Shared Pydantic models (Company, GeoPoint)
 ├── security.py   # Fernet encryption + personal data anonymization
 ├── profiler.py   # Secure in-memory PDF résumé parsing
-└── sourcing.py   # HTTP client, geocoding, company sources, SIRET-based merge
+├── sourcing.py   # HTTP client, geocoding, company sources, SIRET-based merge
+└── storage.py    # Database: shared catalogue, cache, applications, opt-outs
 tests/            # pytest suite, mocked APIs (no network calls by default)
 ```
 
@@ -75,6 +77,7 @@ Design choices:
 - **Company sources share a common interface** (`CompanySource`): adding a source means adding a class.
 - **Multi-tenant from day one.** Every object carries a `client_id`, anticipating a B2B offer for training centers.
 - **SIRET (French company ID) is the unique key**: it deduplicates results across sources and will later prevent contacting the same company twice.
+- **A shared company catalogue.** Recent searches are served from the database, and a given company receives at most 2 Avenly applications per month across all clients, to avoid flooding it.
 
 ## Installation
 
@@ -133,7 +136,7 @@ pre-commit run --all-files  # all checks, including secret detection
 - [ ] Command-line interface
 
 **Month 2: automated sending**
-- [ ] Sending history in a database (no duplicate contact)
+- [x] Database: shared catalogue, search cache, application history (no duplicate contact), opt-out list
 - [ ] Queue with spaced-out sending
 - [ ] Gmail / Outlook OAuth2 login
 

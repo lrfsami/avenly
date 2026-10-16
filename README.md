@@ -36,6 +36,7 @@ flowchart LR
 | `profiler.py` | Lecture sécurisée du CV et anonymisation | ✅ |
 | `sourcing.py` | Ciblage des entreprises par domaine et localisation | ✅ |
 | `security.py` | Chiffrement et anonymisation des données personnelles | ✅ |
+| `storage.py` | Catalogue d'entreprises partagé, historique des candidatures, liste d'opposition | ✅ |
 | LLM → profil JSON | Extraction des compétences et expériences | 🚧 |
 | `enricher.py` | Contexte du site web et contact recruteur | 🚧 |
 | `sender.py` | Rédaction (moins de 120 mots) et envoi | 🚧 |
@@ -65,7 +66,8 @@ src/avenly/
 ├── models.py     # Modèles Pydantic partagés (Company, GeoPoint)
 ├── security.py   # Chiffrement Fernet + anonymisation des données personnelles
 ├── profiler.py   # Lecture sécurisée du CV PDF en mémoire
-└── sourcing.py   # Client HTTP, géocodage, sources d'entreprises, fusion par SIRET
+├── sourcing.py   # Client HTTP, géocodage, sources d'entreprises, fusion par SIRET
+└── storage.py    # Base de données : catalogue partagé, cache, candidatures, opposition
 tests/            # Tests pytest, APIs simulées (aucun appel réseau par défaut)
 ```
 
@@ -75,6 +77,7 @@ Choix d'architecture :
 - **Les sources d'entreprises partagent une interface commune** (`CompanySource`) : ajouter une source revient à ajouter une classe.
 - **Plusieurs clients dès le départ.** Chaque objet porte un `client_id`, en prévision d'une offre B2B pour les CFA.
 - **Le SIRET est la clé unique** : il sert à dédoublonner les résultats entre sources et, plus tard, à ne jamais contacter deux fois la même entreprise.
+- **Un catalogue d'entreprises partagé.** Les recherches récentes sont resservies depuis la base, et une même entreprise ne reçoit pas plus de 2 candidatures Avenly par mois, tous clients confondus, pour ne pas la saturer.
 
 ## Installation
 
@@ -133,7 +136,7 @@ pre-commit run --all-files  # tous les contrôles, dont la détection de secrets
 - [ ] Interface en ligne de commande
 
 **Mois 2 : l'envoi automatisé**
-- [ ] Historique des envois en base de données (pas de double contact)
+- [x] Base de données : catalogue partagé, cache des recherches, historique des candidatures (pas de double contact), liste d'opposition
 - [ ] File d'attente avec envoi espacé
 - [ ] Connexion OAuth2 Gmail / Outlook
 
