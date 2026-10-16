@@ -37,7 +37,7 @@ flowchart LR
 | `sourcing.py` | Company targeting by field and location | ✅ |
 | `security.py` | Encryption and personal data anonymization | ✅ |
 | `storage.py` | Shared company catalogue, application history, opt-out list | ✅ |
-| LLM → JSON profile | Skills and experience extraction | 🚧 |
+| `llm.py` | LLM profile extraction (skills, experience) with a spending budget | ✅ |
 | `enricher.py` | Website context and recruiter contact | 🚧 |
 | `sender.py` | Email drafting (under 120 words) and sending | 🚧 |
 
@@ -56,6 +56,7 @@ Avenly handles résumés: data protection is not an afterthought, it shapes the 
 - **Controlled network calls.** Timeouts, retries with backoff, per-API rate limiting and bounded response size.
 - **No secrets in code.** `gitleaks` blocks any commit containing a key or token, locally (pre-commit hook) and in CI across the full history.
 - **Hardened CI.** GitHub Actions with least-privilege permissions and actions pinned by commit SHA.
+- **LLM under control.** The résumé is passed as data between tags, never as instructions, and the response is constrained to a JSON schema (prompt-injection protection). Every call records its actual cost, and a monthly budget, global and per client, blocks calls before they are sent.
 - **Static analysis.** The `ruff` linter includes Bandit security rules.
 
 ## Architecture
@@ -67,7 +68,8 @@ src/avenly/
 ├── security.py   # Fernet encryption + personal data anonymization
 ├── profiler.py   # Secure in-memory PDF résumé parsing
 ├── sourcing.py   # HTTP client, geocoding, company sources, SIRET-based merge
-└── storage.py    # Database: shared catalogue, cache, applications, opt-outs
+├── storage.py    # Database: shared catalogue, cache, applications, opt-outs
+└── llm.py        # LLM profile extraction (provider-agnostic interface), cost tracking
 tests/            # pytest suite, mocked APIs (no network calls by default)
 ```
 
@@ -130,7 +132,7 @@ pre-commit run --all-files  # all checks, including secret detection
 - [x] Configuration, encryption, anonymization
 - [x] Secure résumé parsing
 - [x] Multi-API sourcing with SIRET-based merge
-- [ ] LLM profile extraction (Pydantic-validated JSON)
+- [x] LLM profile extraction (Pydantic-validated JSON)
 - [ ] Enrichment: website and contact
 - [ ] Email generation and SMTP sending
 - [ ] Command-line interface

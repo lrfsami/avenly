@@ -60,6 +60,12 @@ class Settings(BaseModel):
     # Nombre maximal de candidatures Avenly vers une même entreprise sur 30 jours, tous clients confondus.
     max_applications_per_company: int = Field(default=2, ge=1, le=20)
 
+    # LLM (Claude). Budgets en dollars, sur le mois calendaire en cours.
+    anthropic_api_key: SecretStr | None = None
+    llm_profile_model: str = Field(default="claude-haiku-5-5", pattern=r"^claude-[a-z0-9\-]+$")
+    llm_monthly_budget_usd: float = Field(default=5.0, ge=0, le=1000)
+    llm_budget_per_client_usd: float = Field(default=3.0, ge=0, le=100)
+
     log_level: LogLevel = "INFO"
 
     @field_validator("database_url")
@@ -69,7 +75,7 @@ class Settings(BaseModel):
             raise ValueError("seuls SQLite et PostgreSQL sont supportés")
         return value
 
-    @field_validator("fernet_key", "lba_api_token", mode="before")
+    @field_validator("fernet_key", "lba_api_token", "anthropic_api_key", mode="before")
     @classmethod
     def _empty_secret_is_none(cls, value: object) -> object:
         if isinstance(value, str) and not value.strip():

@@ -170,6 +170,28 @@ class OptOutRecord(Base):
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
 
 
+class LLMUsageRecord(Base):
+    """Coût réel de chaque appel LLM : sert aux budgets mensuels (global et par client)."""
+
+    __tablename__ = "llm_usage"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    client_id: Mapped[str] = mapped_column(String(64), index=True)
+    task: Mapped[str] = mapped_column(String(50))
+    model: Mapped[str] = mapped_column(String(50))
+    input_tokens: Mapped[int] = mapped_column(Integer)
+    output_tokens: Mapped[int] = mapped_column(Integer)
+    cache_read_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    cache_write_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    cost_usd: Mapped[float] = mapped_column(Float)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, index=True)
+
+
+def start_of_month(now: datetime | None = None) -> datetime:
+    now = now or utcnow()
+    return now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+
 # --------------------------------------------------------------------------
 # Accès à la base
 # --------------------------------------------------------------------------
@@ -396,3 +418,41 @@ class Database:
             for c in companies
             if c.siren not in opted_out and c.siret not in already_contacted and c.siren not in saturated
         ]
+
+    # ------------------------------------------------------------------ coûts LLM
+
+    def record_llm_usage(
+        self,
+        *,
+        client_id: str,
+        task: str,
+        model: str,
+        input_tokens: int,
+        output_tokens: int,
+        cache_read_tokens: int = 0,
+        cache_write_tokens: int = 0,
+        cost_usd: float,
+    ) -> None:
+        with self.session() as session:
+            session.add(
+                LLMUsageRecord(
+                    client_id=client_id,
+                    task=task,
+                    model=model,
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                    cache_read_tokens=cache_read_tokens,
+                    cache_write_tokens=cache_write_tokens,
+                    cost_usd=cost_usd,
+                )
+            )
+
+    def llm_spend_this_month(self, client_id: str | None = None) -> float:
+        """Dépense LLM du mois en cours, pour un client ou pour tous."""
+        query = select(func.coalesce(func.sum(LLMUsageRecord.cost_usd), 0.0)).where(
+            LLMUsageRecord.created_at >= start_of_month()
+        )
+        if client_id is not None:
+            query = query.where(LLMUsageRecord.client_id == client_id)
+        with self.session() as session:
+            return float(session.scalar(query) or 0.0)

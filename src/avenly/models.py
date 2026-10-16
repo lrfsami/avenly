@@ -96,3 +96,70 @@ class Company(BaseModel):
         data["sources"] = self.sources | other.sources
         data["has_job_offer"] = self.has_job_offer or other.has_job_offer
         return Company(**data)
+
+
+# --------------------------------------------------------------------------
+# Profil candidat (produit par le LLM à partir du CV anonymisé)
+# --------------------------------------------------------------------------
+# Le schéma reste simple (c'est lui que le LLM doit respecter) ; les limites de
+# taille sont appliquées après coup en tronquant, pour ne jamais rejeter un
+# profil entier à cause d'un champ trop long.
+
+
+def _truncate(limit: int):
+    def _apply(value: str) -> str:
+        return value[:limit]
+
+    return AfterValidator(_apply)
+
+
+def _cap(limit: int):
+    def _apply(values: list) -> list:
+        return values[:limit]
+
+    return AfterValidator(_apply)
+
+
+ShortText = Annotated[CleanStr, _truncate(120)]
+LongText = Annotated[CleanStr, _truncate(600)]
+
+
+class Education(BaseModel):
+    degree: ShortText = Field(description="Intitulé du diplôme, ex. « Cycle ingénieur informatique »")
+    school: ShortText | None = Field(default=None, description="Établissement")
+    field: ShortText | None = Field(default=None, description="Spécialité")
+    start_year: int | None = Field(default=None, description="Année de début (AAAA)")
+    end_year: int | None = Field(default=None, description="Année de fin, prévue ou réelle (AAAA)")
+
+
+class Experience(BaseModel):
+    title: ShortText = Field(description="Intitulé du poste ou du projet")
+    organization: ShortText | None = Field(default=None, description="Entreprise, association ou école")
+    kind: str = Field(description="Un de : stage, alternance, emploi, projet, associatif, autre")
+    duration_months: int | None = Field(default=None, description="Durée en mois si elle est déductible")
+    description: LongText = Field(description="Missions et réalisations, en une ou deux phrases")
+    skills: Annotated[list[ShortText], _cap(15)] = Field(default_factory=list)
+
+
+class Language(BaseModel):
+    name: ShortText
+    level: ShortText | None = Field(default=None, description="Ex. : natif, C1, courant, scolaire")
+
+
+class CandidateProfile(BaseModel):
+    """Profil structuré du candidat. Ne contient aucune coordonnée personnelle."""
+
+    headline: ShortText = Field(description="Titre de profil, ex. « Étudiant ingénieur data en 3e année »")
+    summary: LongText = Field(description="Résumé du profil en 2 ou 3 phrases, à la 3e personne")
+    target_roles: Annotated[list[ShortText], _cap(5)] = Field(
+        default_factory=list, description="Postes visés, déduits du CV"
+    )
+    education: Annotated[list[Education], _cap(10)] = Field(default_factory=list)
+    experiences: Annotated[list[Experience], _cap(20)] = Field(default_factory=list)
+    hard_skills: Annotated[list[ShortText], _cap(40)] = Field(
+        default_factory=list, description="Compétences techniques : langages, outils, méthodes"
+    )
+    soft_skills: Annotated[list[ShortText], _cap(15)] = Field(default_factory=list)
+    languages: Annotated[list[Language], _cap(10)] = Field(default_factory=list)
+    certifications: Annotated[list[ShortText], _cap(15)] = Field(default_factory=list)
+    interests: Annotated[list[ShortText], _cap(15)] = Field(default_factory=list)

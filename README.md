@@ -37,7 +37,7 @@ flowchart LR
 | `sourcing.py` | Ciblage des entreprises par domaine et localisation | ✅ |
 | `security.py` | Chiffrement et anonymisation des données personnelles | ✅ |
 | `storage.py` | Catalogue d'entreprises partagé, historique des candidatures, liste d'opposition | ✅ |
-| LLM → profil JSON | Extraction des compétences et expériences | 🚧 |
+| `llm.py` | Extraction du profil (compétences, expériences) par LLM, avec budget de dépense | ✅ |
 | `enricher.py` | Contexte du site web et contact recruteur | 🚧 |
 | `sender.py` | Rédaction (moins de 120 mots) et envoi | 🚧 |
 
@@ -56,6 +56,7 @@ Avenly manipule des CV : la protection des données n'est pas une option ajouté
 - **Appels réseau maîtrisés.** Timeouts, relances avec backoff, limitation de débit par API et taille de réponse bornée.
 - **Aucun secret dans le code.** `gitleaks` bloque tout commit contenant une clé ou un jeton, en local (hook pre-commit) et dans la CI sur tout l'historique.
 - **CI sécurisée.** GitHub Actions avec permissions minimales et actions épinglées par SHA de commit.
+- **LLM sous contrôle.** Le CV est transmis comme une donnée entre balises, jamais comme une instruction, et la réponse est contrainte à un schéma JSON (protection contre l'injection de prompt). Chaque appel enregistre son coût réel, et un budget mensuel global et par client bloque les appels avant leur envoi.
 - **Analyse statique.** Le lint `ruff` inclut les règles de sécurité Bandit.
 
 ## Architecture
@@ -67,7 +68,8 @@ src/avenly/
 ├── security.py   # Chiffrement Fernet + anonymisation des données personnelles
 ├── profiler.py   # Lecture sécurisée du CV PDF en mémoire
 ├── sourcing.py   # Client HTTP, géocodage, sources d'entreprises, fusion par SIRET
-└── storage.py    # Base de données : catalogue partagé, cache, candidatures, opposition
+├── storage.py    # Base de données : catalogue partagé, cache, candidatures, opposition
+└── llm.py        # Extraction du profil par LLM (interface multi-fournisseur), suivi des coûts
 tests/            # Tests pytest, APIs simulées (aucun appel réseau par défaut)
 ```
 
@@ -130,7 +132,7 @@ pre-commit run --all-files  # tous les contrôles, dont la détection de secrets
 - [x] Configuration, chiffrement, anonymisation
 - [x] Lecture sécurisée du CV
 - [x] Sourcing multi-API avec fusion par SIRET
-- [ ] Extraction du profil par LLM (JSON validé par Pydantic)
+- [x] Extraction du profil par LLM (JSON validé par Pydantic)
 - [ ] Enrichissement : site web et contact
 - [ ] Génération de l'email et envoi SMTP
 - [ ] Interface en ligne de commande
