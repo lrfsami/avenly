@@ -204,12 +204,20 @@ def test_contactable_filters(db):
     db.upsert_companies([*targets, company("44444444400099")])
     db.record_application("client-001", "22222222200022")
     db.add_opt_out("333333333")
-    db.record_application("client-002", "44444444400044")
-    db.record_application("client-003", "44444444400099")
+    db.record_application("client-002", "44444444400044", ApplicationStatus.SENT)
+    db.record_application("client-003", "44444444400099", ApplicationStatus.SENT)
 
     remaining = db.contactable(targets, "client-001")
 
     assert [c.siret for c in remaining] == ["11111111100011"]
+
+
+def test_drafts_do_not_count_for_saturation(db):
+    """Un brouillon jamais envoyé ne doit pas empêcher les autres clients de postuler."""
+    db.upsert_companies([company("44444444400044"), company("44444444400099")])
+    db.record_application("client-002", "44444444400044")  # brouillon
+    db.record_application("client-003", "44444444400099")  # brouillon
+    assert len(db.contactable([company("44444444400044")], "client-001")) == 1
 
 
 def test_contactable_for_another_client(db):

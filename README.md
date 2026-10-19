@@ -38,8 +38,9 @@ flowchart LR
 | `security.py` | Chiffrement et anonymisation des données personnelles | ✅ |
 | `storage.py` | Catalogue d'entreprises partagé, historique des candidatures, liste d'opposition | ✅ |
 | `llm.py` | Extraction du profil (compétences, expériences) par LLM, avec budget de dépense | ✅ |
-| `enricher.py` | Contexte du site web et contact recruteur | 🚧 |
-| `sender.py` | Rédaction (moins de 120 mots) et envoi | 🚧 |
+| `enricher.py` | Site web vérifié, résumé d'activité, page carrières, emails génériques | ✅ |
+| `writer.py` | Rédaction de l'email (moins de 120 mots), brouillons chiffrés à relire | ✅ |
+| `sender.py` | Envoi espacé dans le temps | 🚧 |
 
 ## Sécurité dès la conception
 
@@ -58,6 +59,9 @@ Avenly manipule des CV : la protection des données n'est pas une option ajouté
 - **Aucun secret dans le code.** `gitleaks` bloque tout commit contenant une clé ou un jeton, en local (hook pre-commit) et dans la CI sur tout l'historique.
 - **CI sécurisée.** GitHub Actions avec permissions minimales et actions épinglées par SHA de commit.
 - **LLM sous contrôle.** Le CV est transmis comme une donnée entre balises, jamais comme une instruction, et la réponse est contrainte à un schéma JSON (protection contre l'injection de prompt). Chaque appel enregistre son coût réel, et un budget mensuel global et par client bloque les appels avant leur envoi.
+- **Lecture de sites web sans risque (SSRF).** Seuls les noms de domaine pointant vers des adresses publiques sont contactés : vérification avant la requête, puis de l'adresse réellement jointe (contre le DNS rebinding), redirections revalidées une à une, taille et type de contenu bornés, robots.txt respecté.
+- **Emails nominatifs jamais conservés.** L'enrichissement ne garde que les adresses génériques du domaine de l'entreprise (rh@, recrutement@, contact@…).
+- **Coordonnées du candidat jamais envoyées au LLM.** L'IA rédige le corps de l'email ; la signature (nom, téléphone, email) est ajoutée localement. Les brouillons sont chiffrés en base (Fernet) et chaque texte généré est contrôlé (longueur, coordonnées, marqueurs) avant relecture.
 - **Analyse statique.** Le lint `ruff` inclut les règles de sécurité Bandit.
 
 ## Architecture
@@ -70,7 +74,10 @@ src/avenly/
 ├── profiler.py   # Lecture sécurisée du CV PDF en mémoire
 ├── sourcing.py   # Client HTTP, géocodage, sources d'entreprises, fusion par SIRET
 ├── storage.py    # Base de données : catalogue partagé, cache, candidatures, opposition
-└── llm.py        # Extraction du profil par LLM (interface multi-fournisseur), suivi des coûts
+├── llm.py        # LLM : profil candidat et résumé d'entreprise (interface multi-fournisseur), suivi des coûts
+├── webfetch.py   # Lecture de sites web inconnus, protégée contre la SSRF
+├── enricher.py   # Enrichissement des entreprises (site, carrières, emails génériques), en cache partagé
+└── writer.py     # Rédaction des candidatures : brouillons chiffrés, signature ajoutée localement
 tests/            # Tests pytest, APIs simulées (aucun appel réseau par défaut)
 ```
 
@@ -136,8 +143,9 @@ pre-commit run --all-files  # tous les contrôles, dont la détection de secrets
 - [x] Lecture sécurisée du CV
 - [x] Sourcing multi-API avec fusion par SIRET
 - [x] Extraction du profil par LLM (JSON validé par Pydantic)
-- [ ] Enrichissement : site web et contact
-- [ ] Génération de l'email et envoi SMTP
+- [x] Enrichissement : site web vérifié, page carrières, emails génériques (version gratuite)
+- [x] Rédaction de l'email par LLM (brouillons chiffrés, relus avant envoi)
+- [ ] Envoi SMTP
 - [ ] Interface en ligne de commande
 
 **Mois 2 : l'envoi automatisé**

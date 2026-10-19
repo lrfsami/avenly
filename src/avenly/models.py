@@ -23,6 +23,15 @@ def _clean_text(value: str) -> str:
 
 CleanStr = Annotated[str, AfterValidator(_clean_text)]
 
+
+def _clean_multiline(value: str) -> str:
+    """Comme _clean_text, mais conserve les sauts de ligne (paragraphes d'un email)."""
+    lines = [_clean_text(line) for line in value.replace("\r\n", "\n").split("\n")]
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
+
+
+CleanMultilineStr = Annotated[str, AfterValidator(_clean_multiline)]
+
 _NAF_COMPACT = re.compile(r"^(\d{2})\.?(\d{2}[A-Z])$")
 # « javascript:… », « file:… », « http:… » : tout préfixe de schéma explicite.
 _URL_SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.\-]*:")
@@ -198,3 +207,83 @@ class CandidateProfile(BaseModel):
     mobility: Mobility | None = Field(default=None, description="Zone géographique de recherche")
     driving_licence: bool | None = Field(default=None, description="Permis de conduire mentionné")
     has_vehicle: bool | None = Field(default=None, description="Véhicule personnel mentionné")
+
+
+# --------------------------------------------------------------------------
+# Enrichissement des entreprises
+# --------------------------------------------------------------------------
+
+
+class CompanyInsight(BaseModel):
+    """Résumé d'une entreprise produit par le LLM à partir de son site web."""
+
+    summary: LongText = Field(description="Activité de l'entreprise en 2 ou 3 phrases factuelles")
+    sector: ShortText | None = Field(default=None, description="Secteur d'activité principal")
+    keywords: Annotated[list[ShortText], _cap(10)] = Field(
+        default_factory=list, description="Produits, technologies ou métiers mis en avant"
+    )
+    mentions_apprenticeship: bool = Field(
+        default=False, description="Le site parle d'alternance, d'apprentissage ou de stages"
+    )
+
+
+EnrichmentStatus = Literal["ok", "no_website", "failed"]
+
+
+class Enrichment(BaseModel):
+    """Ce qu'Avenly sait d'une entreprise (partagé entre tous les clients)."""
+
+    siren: str = Field(pattern=r"^\d{9}$")
+    status: EnrichmentStatus
+    website: str | None = None
+    website_verified: bool = False  # site confirmé par le SIREN ou le nom de l'entreprise
+    careers_url: str | None = None
+    generic_emails: Annotated[list[str], _cap(10)] = Field(default_factory=list)
+    insight: CompanyInsight | None = None
+
+    @field_validator("website", "careers_url", mode="before")
+    @classmethod
+    def _safe_urls(cls, value: object) -> str | None:
+        return Company._safe_url(value)
+
+
+# --------------------------------------------------------------------------
+# Candidature
+# --------------------------------------------------------------------------
+
+
+class ApplicationContext(BaseModel):
+    """Ce que le candidat recherche (saisi par lui, pas déduit du CV)."""
+
+    start: ShortText = Field(description="Début souhaité de l'alternance, ex. « septembre 2027 »")
+    rhythm: ShortText | None = Field(
+        default=None, description="Rythme, ex. « 3 semaines entreprise / 1 semaine école »"
+    )
+    duration: ShortText | None = Field(default=None, description="Durée du contrat, ex. « 3 ans »")
+
+
+class Signature(BaseModel):
+    """Coordonnées du candidat : ajoutées localement, JAMAIS envoyées au LLM."""
+
+    full_name: ShortText = Field(min_length=2)
+    email: ShortText | None = None
+    phone: ShortText | None = None
+    linkedin_url: str | None = None
+
+    @field_validator("linkedin_url", mode="before")
+    @classmethod
+    def _safe_linkedin(cls, value: object) -> str | None:
+        return Company._safe_url(value)
+
+    def render(self) -> str:
+        lines = [self.full_name, self.phone, self.email, self.linkedin_url]
+        return "\n".join(line for line in lines if line)
+
+
+class EmailContent(BaseModel):
+    """Email produit par le LLM, avant ajout de la signature."""
+
+    subject: ShortText = Field(description="Objet de l'email, court et précis (moins de 80 caractères)")
+    body: Annotated[CleanMultilineStr, _truncate(2000)] = Field(
+        description="Corps de l'email, salutation et formule de politesse comprises, SANS signature"
+    )

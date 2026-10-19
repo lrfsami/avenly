@@ -18,6 +18,7 @@ dependencies = [
     "pydantic>=2.8",
     "SQLAlchemy>=2.0",
     "anthropic>=1.0",
+    "beautifulsoup4>=4.12",
 ]
 
 [project.optional-dependencies]

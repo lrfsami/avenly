@@ -29,6 +29,7 @@ from sqlalchemy import (
     Float,
     ForeignKey,
     Integer,
+    LargeBinary,
     String,
     TypeDecorator,
     UniqueConstraint,
@@ -40,7 +41,8 @@ from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
 from avenly.config import Settings, get_settings
-from avenly.models import Company, GeoPoint
+from avenly.models import Company, CompanyInsight, Enrichment, GeoPoint
+from avenly.security import CryptoManager
 
 EARTH_RADIUS_KM = 6371.0
 
@@ -184,6 +186,49 @@ class LLMUsageRecord(Base):
     cache_read_tokens: Mapped[int] = mapped_column(Integer, default=0)
     cache_write_tokens: Mapped[int] = mapped_column(Integer, default=0)
     cost_usd: Mapped[float] = mapped_column(Float)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, index=True)
+
+
+class EnrichmentRecord(Base):
+    """Résultat de l'enrichissement d'une entreprise (par SIREN), partagé entre tous les clients."""
+
+    __tablename__ = "enrichments"
+
+    siren: Mapped[str] = mapped_column(String(9), primary_key=True)
+    status: Mapped[str] = mapped_column(String(20))
+    website: Mapped[str | None] = mapped_column(String(500))
+    website_verified: Mapped[bool] = mapped_column(Boolean, default=False)
+    careers_url: Mapped[str | None] = mapped_column(String(500))
+    generic_emails: Mapped[list[str]] = mapped_column(JSON, default=list)
+    insight: Mapped[dict | None] = mapped_column(JSON)
+    enriched_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, index=True)
+
+    def to_enrichment(self) -> Enrichment:
+        return Enrichment(
+            siren=self.siren,
+            status=self.status,
+            website=self.website,
+            website_verified=self.website_verified,
+            careers_url=self.careers_url,
+            generic_emails=list(self.generic_emails or []),
+            insight=CompanyInsight(**self.insight) if self.insight else None,
+        )
+
+
+class DraftRecord(Base):
+    """Brouillon d'email. Objet et corps CHIFFRÉS (Fernet) : une lettre de motivation est personnelle."""
+
+    __tablename__ = "drafts"
+    __table_args__ = (UniqueConstraint("client_id", "siret", name="uq_draft_client_company"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    client_id: Mapped[str] = mapped_column(String(64), index=True)
+    siret: Mapped[str] = mapped_column(ForeignKey("companies.siret"), index=True)
+    subject_encrypted: Mapped[bytes] = mapped_column(LargeBinary)
+    body_encrypted: Mapped[bytes] = mapped_column(LargeBinary)
+    recipient_email: Mapped[str | None] = mapped_column(String(320))
+    careers_url: Mapped[str | None] = mapped_column(String(500))
+    model: Mapped[str] = mapped_column(String(50))
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, index=True)
 
 
@@ -408,7 +453,10 @@ class Database:
             recent = session.execute(
                 select(CompanyRecord.siren, func.count())
                 .join(ApplicationRecord, ApplicationRecord.siret == CompanyRecord.siret)
-                .where(ApplicationRecord.created_at >= since)
+                .where(
+                    ApplicationRecord.created_at >= since,
+                    ApplicationRecord.status != ApplicationStatus.DRAFT,  # un brouillon n'a rien envoyé
+                )
                 .group_by(CompanyRecord.siren)
             ).all()
         saturated = {siren for siren, count in recent if count >= limit}
@@ -456,3 +504,78 @@ class Database:
             query = query.where(LLMUsageRecord.client_id == client_id)
         with self.session() as session:
             return float(session.scalar(query) or 0.0)
+
+    # ------------------------------------------------------------------ enrichissement
+
+    def get_enrichment(self, siren: str, *, max_age_days: int) -> Enrichment | None:
+        """Enrichissement en cache s'il a moins de `max_age_days` jours."""
+        cutoff = utcnow() - timedelta(days=max_age_days)
+        with self.session() as session:
+            record = session.get(EnrichmentRecord, siren)
+            if record is None or record.enriched_at < cutoff:
+                return None
+            return record.to_enrichment()
+
+    def save_enrichment(self, enrichment: Enrichment) -> None:
+        with self.session() as session:
+            record = session.get(EnrichmentRecord, enrichment.siren)
+            if record is None:
+                record = EnrichmentRecord(siren=enrichment.siren)
+                session.add(record)
+            record.status = enrichment.status
+            record.website = enrichment.website
+            record.website_verified = enrichment.website_verified
+            record.careers_url = enrichment.careers_url
+            record.generic_emails = list(enrichment.generic_emails)
+            record.insight = enrichment.insight.model_dump() if enrichment.insight else None
+            record.enriched_at = utcnow()
+
+    # ------------------------------------------------------------------ brouillons (chiffrés)
+
+    def save_draft(
+        self,
+        crypto: CryptoManager,
+        *,
+        client_id: str,
+        siret: str,
+        subject: str,
+        body: str,
+        recipient_email: str | None,
+        careers_url: str | None,
+        model: str,
+    ) -> None:
+        """Enregistre (ou remplace) le brouillon d'un client pour un établissement, chiffré."""
+        with self.session() as session:
+            draft = session.scalar(
+                select(DraftRecord).where(DraftRecord.client_id == client_id, DraftRecord.siret == siret)
+            )
+            if draft is None:
+                draft = DraftRecord(client_id=client_id, siret=siret)
+                session.add(draft)
+            draft.subject_encrypted = crypto.encrypt_text(subject)
+            draft.body_encrypted = crypto.encrypt_text(body)
+            draft.recipient_email = recipient_email
+            draft.careers_url = careers_url
+            draft.model = model
+            draft.created_at = utcnow()
+
+    def list_drafts(self, crypto: CryptoManager, client_id: str) -> list[dict[str, str | None]]:
+        """Brouillons d'un client, déchiffrés (avec le nom de l'entreprise)."""
+        with self.session() as session:
+            rows = session.execute(
+                select(DraftRecord, CompanyRecord.name)
+                .join(CompanyRecord, CompanyRecord.siret == DraftRecord.siret)
+                .where(DraftRecord.client_id == client_id)
+                .order_by(DraftRecord.created_at)
+            ).all()
+        return [
+            {
+                "siret": draft.siret,
+                "company": name,
+                "subject": crypto.decrypt_text(draft.subject_encrypted),
+                "body": crypto.decrypt_text(draft.body_encrypted),
+                "recipient_email": draft.recipient_email,
+                "careers_url": draft.careers_url,
+            }
+            for draft, name in rows
+        ]

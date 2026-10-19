@@ -38,8 +38,9 @@ flowchart LR
 | `security.py` | Encryption and personal data anonymization | ✅ |
 | `storage.py` | Shared company catalogue, application history, opt-out list | ✅ |
 | `llm.py` | LLM profile extraction (skills, experience) with a spending budget | ✅ |
-| `enricher.py` | Website context and recruiter contact | 🚧 |
-| `sender.py` | Email drafting (under 120 words) and sending | 🚧 |
+| `enricher.py` | Verified website, activity summary, careers page, generic emails | ✅ |
+| `writer.py` | Email drafting (under 120 words), encrypted drafts to review | ✅ |
+| `sender.py` | Spaced-out sending | 🚧 |
 
 ## Security by design
 
@@ -58,6 +59,9 @@ Avenly handles résumés: data protection is not an afterthought, it shapes the 
 - **No secrets in code.** `gitleaks` blocks any commit containing a key or token, locally (pre-commit hook) and in CI across the full history.
 - **Hardened CI.** GitHub Actions with least-privilege permissions and actions pinned by commit SHA.
 - **LLM under control.** The résumé is passed as data between tags, never as instructions, and the response is constrained to a JSON schema (prompt-injection protection). Every call records its actual cost, and a monthly budget, global and per client, blocks calls before they are sent.
+- **Safe web fetching (SSRF).** Only domains resolving to public addresses are contacted: checked before the request, then the actually connected address is re-checked (against DNS rebinding), every redirect is re-validated, size and content type are bounded, robots.txt is honoured.
+- **Personal emails never stored.** Enrichment only keeps generic addresses on the company's own domain (hr@, recruitment@, contact@…).
+- **Candidate contact details never sent to the LLM.** The AI writes the email body; the signature (name, phone, email) is added locally. Drafts are encrypted in the database (Fernet) and every generated text is checked (length, contact details, markers) before review.
 - **Static analysis.** The `ruff` linter includes Bandit security rules.
 
 ## Architecture
@@ -70,7 +74,10 @@ src/avenly/
 ├── profiler.py   # Secure in-memory PDF résumé parsing
 ├── sourcing.py   # HTTP client, geocoding, company sources, SIRET-based merge
 ├── storage.py    # Database: shared catalogue, cache, applications, opt-outs
-└── llm.py        # LLM profile extraction (provider-agnostic interface), cost tracking
+├── llm.py        # LLM: candidate profile and company summary (provider-agnostic), cost tracking
+├── webfetch.py   # SSRF-safe fetching of unknown websites
+├── enricher.py   # Company enrichment (website, careers, generic emails), shared cache
+└── writer.py     # Application drafting: encrypted drafts, signature added locally
 tests/            # pytest suite, mocked APIs (no network calls by default)
 ```
 
@@ -136,8 +143,9 @@ pre-commit run --all-files  # all checks, including secret detection
 - [x] Secure résumé parsing
 - [x] Multi-API sourcing with SIRET-based merge
 - [x] LLM profile extraction (Pydantic-validated JSON)
-- [ ] Enrichment: website and contact
-- [ ] Email generation and SMTP sending
+- [x] Enrichment: verified website, careers page, generic emails (free version)
+- [x] LLM email drafting (encrypted drafts, reviewed before sending)
+- [ ] SMTP sending
 - [ ] Command-line interface
 
 **Month 2: automated sending**

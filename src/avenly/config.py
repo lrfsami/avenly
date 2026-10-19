@@ -59,10 +59,14 @@ class Settings(BaseModel):
     sourcing_cache_days: int = Field(default=30, ge=0, le=365)
     # Nombre maximal de candidatures Avenly vers une même entreprise sur 30 jours, tous clients confondus.
     max_applications_per_company: int = Field(default=2, ge=1, le=20)
+    # Un enrichissement (site, résumé, emails génériques) est réutilisé pendant N jours.
+    enrichment_cache_days: int = Field(default=90, ge=1, le=365)
 
     # LLM (Claude). Budgets en dollars, sur le mois calendaire en cours.
     anthropic_api_key: SecretStr | None = None
     llm_profile_model: str = Field(default="claude-haiku-5-5", pattern=r"^claude-[a-z0-9\-]+$")
+    # Rédaction des emails : la qualité d'écriture compte, d'où un modèle plus capable.
+    llm_email_model: str = Field(default="claude-sonnet-5-5", pattern=r"^claude-[a-z0-9\-]+$")
     llm_monthly_budget_usd: float = Field(default=5.0, ge=0, le=1000)
     llm_budget_per_client_usd: float = Field(default=3.0, ge=0, le=100)
 
