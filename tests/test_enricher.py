@@ -287,3 +287,22 @@ def test_budget_exceeded_stops_everything(db):
     llm = FakeLLM(error=BudgetExceededError("budget"))
     with pytest.raises(BudgetExceededError):
         Enricher(db, FakeFetcher(SITE), llm=llm).enrich(acme(website="https://www.acme.fr"))
+
+
+def test_foreign_region_emails_are_ignored():
+    """« contact.apac@ » vise l'Asie-Pacifique : inutile pour une alternance en France."""
+    pages = [
+        ParsedPage(
+            url="https://www.acme.com",
+            title="",
+            text=(
+                "contact.apac@acme.com jobs-us@acme.com contact.france@acme.com "
+                "rh.fr@acme.com contact@acme.com"
+            ),
+        )
+    ]
+    assert extract_generic_emails(pages, "acme.com") == [
+        "rh.fr@acme.com",
+        "contact.france@acme.com",
+        "contact@acme.com",
+    ]

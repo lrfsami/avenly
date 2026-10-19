@@ -107,6 +107,11 @@ GENERIC_LOCAL_PARTS = re.compile(
     r"|alternance|stages?|talents?|contact|info|infos|hello|bonjour|accueil|admin(?:istration)?)"
     r"(?:[.\-_][a-z0-9]+)?$"
 )
+# « contact.apac@ », « jobs-us@ » : adresses destinées à d'autres pays, inutiles pour la France.
+FOREIGN_REGION_SUFFIX = re.compile(
+    r"[.\-_](?:apac|asia|asie|emea|americas?|latam|na|us|usa|uk|gb|de|es|it|nl|be|ch|ca|au|in|cn|jp|sg|"
+    r"me|mena|africa|nordics?|dach|benelux|international|intl|global)$"
+)
 _EMAIL_IN_TEXT = re.compile(r"[a-z0-9._%+\-]{1,64}@[a-z0-9\-]{1,63}(?:\.[a-z0-9\-]{1,63}){1,4}", re.I)
 _OBFUSCATED_AT = re.compile(r"\s*(?:\[|\(|\{)\s*(?:at|arobase)\s*(?:\]|\)|\})\s*", re.I)
 _OBFUSCATED_DOT = re.compile(r"\s*(?:\[|\(|\{)\s*(?:dot|point)\s*(?:\]|\)|\})\s*", re.I)
@@ -122,7 +127,11 @@ def extract_generic_emails(pages: Iterable[ParsedPage], site_domain: str) -> lis
             local, _, domain = email.partition("@")
             if not domain or not (domain == site_domain or domain.endswith("." + site_domain)):
                 continue
-            if GENERIC_LOCAL_PARTS.match(local) and email not in found:
+            if (
+                GENERIC_LOCAL_PARTS.match(local)
+                and not FOREIGN_REGION_SUFFIX.search(local)
+                and email not in found
+            ):
                 found.append(email)
     # Les adresses de recrutement d'abord, puis les adresses de contact.
     return sorted(

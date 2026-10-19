@@ -18,7 +18,8 @@ import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 
-from avenly.llm import EMAIL_MAX_WORDS, LLMClient
+from avenly.config import get_settings
+from avenly.llm import LLMClient
 from avenly.models import (
     ApplicationContext,
     CandidateProfile,
@@ -46,12 +47,13 @@ class Draft:
     warnings: list[str] = field(default_factory=list)
 
 
-def check_email(content: EmailContent) -> list[str]:
+def check_email(content: EmailContent, max_words: int | None = None) -> list[str]:
     """Contrôles automatiques du texte produit par le LLM."""
+    max_words = max_words or get_settings().email_max_words
     warnings: list[str] = []
     words = len(re.findall(r"\w+(?:['’]\w+)?", content.body))
-    if words > EMAIL_MAX_WORDS + WORD_TOLERANCE:
-        warnings.append(f"Email long ({words} mots, objectif {EMAIL_MAX_WORDS}).")
+    if words > max_words + WORD_TOLERANCE:
+        warnings.append(f"Email long ({words} mots, objectif {max_words}).")
     text = f"{content.subject}\n{content.body}"
     if REDACTED in text:
         warnings.append("Le marqueur [CONFIDENTIEL] apparaît dans l'email.")

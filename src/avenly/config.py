@@ -67,6 +67,8 @@ class Settings(BaseModel):
     llm_profile_model: str = Field(default="claude-haiku-5-5", pattern=r"^claude-[a-z0-9\-]+$")
     # Rédaction des emails : la qualité d'écriture compte, d'où un modèle plus capable.
     llm_email_model: str = Field(default="claude-sonnet-5-5", pattern=r"^claude-[a-z0-9\-]+$")
+    # Longueur visée du corps des emails (en mots) : à ajuster selon les taux de réponse.
+    email_max_words: int = Field(default=150, ge=60, le=300)
     llm_monthly_budget_usd: float = Field(default=5.0, ge=0, le=1000)
     llm_budget_per_client_usd: float = Field(default=3.0, ge=0, le=100)
 

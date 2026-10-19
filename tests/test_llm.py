@@ -293,3 +293,18 @@ def test_summarize_company_is_charged_to_shared_catalogue(db):
 
     assert "jean@acme.fr" not in messages.calls[0]["messages"][0]["content"]
     assert db.llm_spend_this_month(SHARED_CLIENT_ID) > 0
+
+
+def test_email_prompt_uses_configured_length_and_current_status(db, monkeypatch):
+    from avenly.models import ApplicationContext, EmailContent
+
+    monkeypatch.setenv("EMAIL_MAX_WORDS", "180")
+    get_settings.cache_clear()
+    client, messages = make_client(db, response=response(parsed=EmailContent(subject="s", body="b")))
+    context = ApplicationContext(start="septembre 2027", current_status="3e année cycle ingénieur InSI")
+    client.write_email(PROFILE, "ACME", None, context, client_id="moi")
+
+    call = messages.calls[0]
+    assert "180 mots maximum" in call["system"]
+    assert "PRIME sur le CV" in call["system"]
+    assert "3e année cycle ingénieur InSI" in call["messages"][0]["content"]

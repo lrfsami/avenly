@@ -227,3 +227,15 @@ def test_check_email_too_long():
 )
 def test_check_email_detects_leaks(body, alert):
     assert any(alert in w for w in check_email(EmailContent(subject="s", body=body)))
+
+
+def test_email_length_limit_is_configurable(monkeypatch):
+    from avenly.config import get_settings
+
+    body = "Madame, Monsieur, " + "mot " * 140
+    monkeypatch.setenv("EMAIL_MAX_WORDS", "150")
+    get_settings.cache_clear()
+    assert check_email(EmailContent(subject="s", body=body)) == []
+    monkeypatch.setenv("EMAIL_MAX_WORDS", "80")
+    get_settings.cache_clear()
+    assert any("long" in w for w in check_email(EmailContent(subject="s", body=body)))

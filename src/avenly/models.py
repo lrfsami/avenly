@@ -255,6 +255,10 @@ class Enrichment(BaseModel):
 class ApplicationContext(BaseModel):
     """Ce que le candidat recherche (saisi par lui, pas déduit du CV)."""
 
+    current_status: ShortText | None = Field(
+        default=None,
+        description="Situation actuelle, prioritaire sur le CV, ex. « 3e année cycle ingénieur InSI »",
+    )
     start: ShortText = Field(description="Début souhaité de l'alternance, ex. « septembre 2027 »")
     rhythm: ShortText | None = Field(
         default=None, description="Rythme, ex. « 3 semaines entreprise / 1 semaine école »"
