@@ -129,12 +129,42 @@ def _clean(text: str) -> str:
     return _MULTI_NEWLINES.sub("\n\n", text).strip()
 
 
-def _redact_names(text: str, names: Iterable[str]) -> str:
-    """Masque le nom/prénom du candidat (insensible à la casse)."""
-    for part in {p for name in names for p in re.split(r"[\s\-]+", name.strip())}:
-        if len(part) >= 2:
-            text = re.sub(rf"(?<!\w){re.escape(part)}(?!\w)", REDACTED, text, flags=re.IGNORECASE)
-    return text
+# Variantes accentuées : « Lea » doit aussi masquer « Léa », et inversement.
+_ACCENT_VARIANTS = {
+    "a": "aàâä", "c": "cç", "e": "eéèêë", "i": "iîï", "o": "oôö", "u": "uùûü", "y": "yÿ",
+}  # fmt: skip
+
+
+def _strip_accents(value: str) -> str:
+    decomposed = unicodedata.normalize("NFKD", value)
+    return "".join(ch for ch in decomposed if not unicodedata.combining(ch))
+
+
+def _name_parts(names: Iterable[str]) -> set[str]:
+    """Découpe « Jean-Marc Dupont » en {"Jean", "Marc", "Dupont"} (parties de 2 lettres ou plus)."""
+    if isinstance(names, str):  # erreur fréquente : read_cv(..., candidate_names="Jean Dupont")
+        names = [names]
+    parts = {p for name in names for p in re.split(r"[\s\-]+", name.strip()) if len(p) >= 2}
+    if not parts:
+        raise CVError("Nom du candidat obligatoire : il sert à le masquer avant tout envoi à une IA.")
+    return parts
+
+
+def _name_pattern(part: str) -> re.Pattern[str]:
+    letters = "".join(
+        f"[{_ACCENT_VARIANTS[ch]}]" if ch in _ACCENT_VARIANTS else re.escape(ch)
+        for ch in _strip_accents(part).lower()
+    )
+    return re.compile(rf"(?<!\w){letters}(?!\w)", re.IGNORECASE)
+
+
+def _redact_names(text: str, parts: set[str]) -> tuple[str, int]:
+    """Masque les parties du nom (casse et accents ignorés). Renvoie (texte, nombre de remplacements)."""
+    total = 0
+    for part in parts:
+        text, count = _name_pattern(part).subn(REDACTED, text)
+        total += count
+    return text, total
 
 
 # --------------------------------------------------------------------------
@@ -145,13 +175,16 @@ def _redact_names(text: str, names: Iterable[str]) -> str:
 def read_cv(
     source: str | Path | bytes | BinaryIO,
     *,
-    candidate_names: Iterable[str] = (),
+    candidate_names: Iterable[str],
 ) -> CVDocument:
     """Lit un CV PDF de façon sécurisée et renvoie son texte anonymisé.
 
-    `candidate_names` : nom et prénom du candidat, masqués en plus des
-    emails, téléphones et adresses.
+    `candidate_names` (obligatoire) : nom et prénom du candidat, masqués en plus
+    des emails, téléphones et adresses. Si aucun n'est retrouvé dans le CV
+    (faute de frappe, oubli), la lecture échoue plutôt que de laisser passer
+    le nom en clair.
     """
+    name_parts = _name_parts(candidate_names)  # vérifié avant même de lire le fichier
     data = _read_bytes(source, get_settings().max_cv_size_bytes)
     _check_magic_bytes(data)
     sha256 = hashlib.sha256(data).hexdigest()
@@ -161,8 +194,14 @@ def read_cv(
 
     # anonymize() d'abord : masquer le nom avant casserait la détection des
     # emails du type prenom.nom@gmail.com.
-    text = _redact_names(anonymize(_clean(raw_text)), candidate_names)
+    text = anonymize(_clean(raw_text))
     if not text:
         raise CVError("Aucun texte extractible : CV scanné en image (OCR non supporté).")
+    text, redacted = _redact_names(text, name_parts)
+    if redacted == 0:
+        raise CVError(
+            "Le nom fourni n'apparaît pas dans le CV : vérifie l'orthographe "
+            "(le CV n'est pas utilisé tant que le nom ne peut pas être masqué)."
+        )
 
     return CVDocument(sha256=sha256, page_count=page_count, text=text, truncated=truncated)

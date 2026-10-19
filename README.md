@@ -46,6 +46,7 @@ flowchart LR
 Avenly manipule des CV : la protection des données n'est pas une option ajoutée après coup, elle structure le code.
 
 - **Aucune donnée personnelle envoyée aux LLM.** Emails, téléphones (formats français et internationaux), adresses postales et nom du candidat sont remplacés par `[CONFIDENTIEL]` avant tout traitement externe.
+- **Nom du candidat obligatoire et vérifié.** Le CV est refusé si le nom fourni n'y est pas retrouvé (faute de frappe, oubli) : il ne peut jamais partir en clair par erreur. La comparaison ignore la casse et les accents.
 - **CV traités en mémoire uniquement.** Le PDF est lu via `io.BytesIO`, aucune copie n'est écrite sur le disque.
 - **Validation stricte des fichiers.** Signature `%PDF-` vérifiée (l'extension ne prouve rien), taille et nombre de pages limités, PDF chiffrés ou corrompus refusés.
 - **Résistance aux contenus piégés.** Regex à quantificateurs bornés (protection ReDoS) et suppression des caractères Unicode invisibles, souvent utilisés pour cacher des injections de prompt.
@@ -107,7 +108,9 @@ Pour activer La Bonne Alternance, demander un jeton sur [api.apprentissage.beta.
 from avenly.profiler import read_cv
 from avenly.sourcing import find_companies
 
-cv = read_cv("data/mon_cv.pdf", candidate_names=["Prénom Nom"])
+cv = read_cv(
+    "data/mon_cv.pdf", candidate_names=["Prénom Nom"]
+)  # ton vrai nom : obligatoire, et vérifié dans le CV
 print(cv.text)  # texte anonymisé, prêt pour un LLM
 
 companies = find_companies("informatique", "Lyon", client_id="moi", radius_km=20)
