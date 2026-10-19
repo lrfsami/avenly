@@ -112,12 +112,39 @@ _POSTCODE_CITY = re.compile(
     r"(?:[^\S\n]+(?:[A-ZÀ-Ý][\w'’\-]{0,40}|sur|sous|en|le|la|les|de|du|des|lès|\d{1,2})){0,5}"
 )
 
+# Date complète (jour/mois/année) : dans un CV, c'est presque toujours la date de naissance.
+# Les dates d'expérience (« 08/2024 », « 2025-2026 ») ne sont pas concernées.
+_FULL_DATE = re.compile(
+    r"(?<![\d/.\-])(?:0?[1-9]|[12]\d|3[01])[/.\-](?:0?[1-9]|1[0-2])[/.\-](?:19|20)\d{2}(?![\d/.\-])"
+)
+
+_MONTHS = (
+    r"janvier|février|fevrier|mars|avril|mai|juin|juillet"
+    r"|août|aout|septembre|octobre|novembre|décembre|decembre"
+)
+# « Né le 17 décembre 2005 », « née en 2005 », « Date de naissance : … », « Âge : 20 ans », « 20 ans »
+_BIRTH_MENTION = re.compile(
+    rf"\b(?:n[ée]e?|date de naissance)\s*(?:le|en|:)?\s*"
+    rf"(?:\d{{1,2}}(?:er)?\s+(?:{_MONTHS})\s+)?(?:19|20)\d{{2}}\b"
+    r"|\b[âa]ge\s*:?\s*\d{1,2}\s*ans\b"
+    r"|(?<![\w,.])(?:1[5-9]|[2-6]\d)\s*ans\b(?!\s+d['’]exp)",
+    re.IGNORECASE,
+)
+
 # L'ordre compte : emails d'abord (ils peuvent contenir des chiffres).
-_PATTERNS: tuple[re.Pattern[str], ...] = (_EMAIL, _PHONE_FR, _PHONE_INTL, _STREET, _POSTCODE_CITY)
+_PATTERNS: tuple[re.Pattern[str], ...] = (
+    _EMAIL,
+    _FULL_DATE,
+    _BIRTH_MENTION,
+    _PHONE_FR,
+    _PHONE_INTL,
+    _STREET,
+    _POSTCODE_CITY,
+)
 
 
 def anonymize(text: str) -> str:
-    """Remplace emails, téléphones et adresses postales par [CONFIDENTIEL].
+    """Remplace emails, téléphones, adresses postales, dates de naissance et âge par [CONFIDENTIEL].
 
     Heuristique par regex : à utiliser avant tout envoi de texte à un LLM.
     Ne détecte pas les noms de personnes ni les adresses sans numéro de voie

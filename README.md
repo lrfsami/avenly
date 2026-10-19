@@ -45,7 +45,7 @@ flowchart LR
 
 Avenly manipule des CV : la protection des données n'est pas une option ajoutée après coup, elle structure le code.
 
-- **Aucune donnée personnelle envoyée aux LLM.** Emails, téléphones (formats français et internationaux), adresses postales et nom du candidat sont remplacés par `[CONFIDENTIEL]` avant tout traitement externe.
+- **Aucune donnée personnelle envoyée aux LLM.** Emails, téléphones (formats français et internationaux), adresses postales, dates de naissance, âge et nom du candidat sont remplacés par `[CONFIDENTIEL]` avant tout traitement externe.
 - **Nom du candidat obligatoire et vérifié.** Le CV est refusé si le nom fourni n'y est pas retrouvé (faute de frappe, oubli) : il ne peut jamais partir en clair par erreur. La comparaison ignore la casse et les accents.
 - **CV traités en mémoire uniquement.** Le PDF est lu via `io.BytesIO`, aucune copie n'est écrite sur le disque.
 - **Validation stricte des fichiers.** Signature `%PDF-` vérifiée (l'extension ne prouve rien), taille et nombre de pages limités, PDF chiffrés ou corrompus refusés.

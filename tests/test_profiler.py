@@ -128,3 +128,17 @@ def test_name_matching_ignores_case_and_accents(make_pdf, in_cv, typed):
 def test_name_does_not_mask_longer_words(make_pdf):
     cv = read_cv(make_pdf("Léa Martin, stage chez Martinez et Leandre"), candidate_names=["Léa Martin"])
     assert "Martinez" in cv.text and "Leandre" in cv.text
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("É T U D E S", "ÉTUDES"),
+        ("D ’ I N T É R Ê T", "D’INTÉRÊT"),
+        ("C O M P É T E N C E S", "COMPÉTENCES"),
+        ("A B test", "A B test"),  # moins de 4 lettres : on ne touche pas
+        ("C'est à dire", "C'est à dire"),
+    ],
+)
+def test_clean_rejoins_spaced_headings(raw, expected):
+    assert _clean(raw) == expected

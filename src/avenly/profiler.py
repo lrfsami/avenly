@@ -98,7 +98,10 @@ def _extract_text(data: bytes) -> tuple[int, str, bool]:
         total = 0
         truncated = False
         for page in doc:
-            page_text = page.get_text("text", sort=True)
+            # Ordre interne du PDF : sur un CV en colonnes, il garde chaque bloc
+            # (paragraphe, rubrique) d'un seul tenant, là où un tri par position
+            # mélangerait les lignes des deux colonnes.
+            page_text = page.get_text("text")
             parts.append(page_text)
             total += len(page_text)
             if total > MAX_TEXT_CHARS:
@@ -112,6 +115,10 @@ def _extract_text(data: bytes) -> tuple[int, str, bool]:
 
 _MULTI_SPACES = re.compile(r"[^\S\n]+")
 _MULTI_NEWLINES = re.compile(r"\n{3,}")
+# Titres en lettres espacées, fréquents dans les CV : « É T U D E S », « D ’ I N T É R Ê T ».
+_SPACED_LETTERS = re.compile(
+    r"(?<!\S)(?:[^\W\d_’'] ){3,}[^\W\d_’'](?!\S)|(?<!\S)[^\W\d_] [’'] (?:[^\W\d_] ){2,}[^\W\d_](?!\S)"
+)
 
 
 def _clean(text: str) -> str:
@@ -125,6 +132,7 @@ def _clean(text: str) -> str:
         ch for ch in text if ch in "\n\t" or unicodedata.category(ch) not in ("Cc", "Cf", "Co", "Cs")
     )
     text = _MULTI_SPACES.sub(" ", text)
+    text = _SPACED_LETTERS.sub(lambda m: m.group().replace(" ", ""), text)
     text = "\n".join(line.strip() for line in text.split("\n"))
     return _MULTI_NEWLINES.sub("\n\n", text).strip()
 

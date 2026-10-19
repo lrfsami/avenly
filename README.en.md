@@ -45,7 +45,7 @@ flowchart LR
 
 Avenly handles résumés: data protection is not an afterthought, it shapes the code.
 
-- **No personal data sent to LLMs.** Emails, phone numbers (French and international formats), postal addresses and the candidate's name are replaced with `[CONFIDENTIEL]` before any external processing.
+- **No personal data sent to LLMs.** Emails, phone numbers (French and international formats), postal addresses, dates of birth, age and the candidate's name are replaced with `[CONFIDENTIEL]` before any external processing.
 - **Candidate name required and checked.** The résumé is rejected if the given name cannot be found in it (typo, omission): it can never leak in clear text by mistake. Matching ignores case and accents.
 - **In-memory résumé processing only.** The PDF is read through `io.BytesIO`; no copy is ever written to disk.
 - **Strict file validation.** `%PDF-` magic bytes checked (the extension proves nothing), size and page count limited, encrypted or corrupted PDFs rejected.

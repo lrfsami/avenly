@@ -28,6 +28,11 @@ from avenly.security import REDACTED, CryptoManager, SecurityError, anonymize, g
         "10 bd Saint-Michel",
         "75002 Paris",
         "13008 Marseille Cedex 08",
+        "17/12/2005",
+        "03.04.2004",
+        "né le 17 décembre 2005",
+        "Née en 2005",
+        "Âge : 20 ans",
     ],
 )
 def test_pii_is_redacted(pii):
@@ -49,6 +54,10 @@ def test_pii_is_redacted(pii):
         "budget 2500 euros",
         "promo de 35000 étudiants",
         "Licence 3 Informatique",
+        "08/2024 Agent de production",
+        "2025-2026 Licence 2",
+        "5 ans d'expérience",
+        "rayon de 80 km",
     ],
 )
 def test_useful_text_is_kept(useful_text):
