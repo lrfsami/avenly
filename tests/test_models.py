@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from avenly.models import Company
+from avenly.models import CandidateProfile, Company, Experience
 
 
 def make_company(**overrides) -> Company:
@@ -56,3 +56,40 @@ def test_merge_fills_missing_fields():
 def test_merge_refuses_different_siret():
     with pytest.raises(ValueError):
         make_company().merge(make_company(siret="98765432100012"))
+
+
+# --------------------------------------------------------------------------
+# Profil candidat
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("2024-08", "2024-08"),
+        ("2024", "2024"),
+        ("En cours", "en cours"),
+        ("août 2024", None),
+        ("2024-13", None),
+    ],
+)
+def test_experience_dates_are_normalized(raw, expected):
+    experience = Experience(title="Stage", kind="stage", description="d", start=raw)
+    assert experience.start == expected
+
+
+def test_experience_kind_is_restricted():
+    with pytest.raises(ValidationError):
+        Experience(title="x", kind="freelance", description="d")
+
+
+@pytest.mark.parametrize(("radius", "expected"), [(80, 80), (0, None), (5000, None)])
+def test_mobility_radius_is_bounded(radius, expected):
+    profile = CandidateProfile(headline="h", summary="s", mobility={"city": "Marseille", "radius_km": radius})
+    assert profile.mobility.radius_km == expected
+
+
+def test_profile_texts_are_truncated():
+    profile = CandidateProfile(headline="x" * 500, summary="ok", hard_skills=["Python"] * 100)
+    assert len(profile.headline) == 120
+    assert len(profile.hard_skills) == 40

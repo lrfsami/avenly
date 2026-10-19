@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from typing import Annotated
+from typing import Annotated, Literal
 from urllib.parse import urlsplit
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, field_validator
@@ -132,10 +132,31 @@ class Education(BaseModel):
     end_year: int | None = Field(default=None, description="Année de fin, prévue ou réelle (AAAA)")
 
 
+_MONTH_DATE = re.compile(r"^(?:19|20)\d{2}(?:-(?:0[1-9]|1[0-2]))?$")
+
+
+def _month_date(value: str | None) -> str | None:
+    """Garde « 2024 » ou « 2024-08 » (et « en cours ») ; ignore tout autre format."""
+    if value is None:
+        return None
+    value = value.strip().lower()
+    if value == "en cours" or _MONTH_DATE.match(value):
+        return value
+    return None
+
+
+MonthDate = Annotated[str | None, AfterValidator(_month_date)]
+ExperienceKind = Literal["stage", "alternance", "emploi", "projet", "associatif", "autre"]
+
+
 class Experience(BaseModel):
     title: ShortText = Field(description="Intitulé du poste ou du projet")
     organization: ShortText | None = Field(default=None, description="Entreprise, association ou école")
-    kind: str = Field(description="Un de : stage, alternance, emploi, projet, associatif, autre")
+    kind: ExperienceKind = Field(description="Type d'expérience ; « autre » en cas de doute")
+    start: MonthDate = Field(
+        default=None, description="Début au format AAAA-MM, ou AAAA si le mois est inconnu"
+    )
+    end: MonthDate = Field(default=None, description="Fin au format AAAA-MM ou AAAA, ou « en cours »")
     duration_months: int | None = Field(default=None, description="Durée en mois si elle est déductible")
     description: LongText = Field(description="Missions et réalisations, en une ou deux phrases")
     skills: Annotated[list[ShortText], _cap(15)] = Field(default_factory=list)
@@ -144,6 +165,17 @@ class Experience(BaseModel):
 class Language(BaseModel):
     name: ShortText
     level: ShortText | None = Field(default=None, description="Ex. : natif, C1, courant, scolaire")
+
+
+def _radius(value: int | None) -> int | None:
+    return value if value is not None and 0 < value <= 1000 else None
+
+
+class Mobility(BaseModel):
+    city: ShortText | None = Field(default=None, description="Ville de référence de la recherche")
+    radius_km: Annotated[int | None, AfterValidator(_radius)] = Field(
+        default=None, description="Rayon de mobilité en kilomètres, s'il est indiqué"
+    )
 
 
 class CandidateProfile(BaseModel):
@@ -163,3 +195,6 @@ class CandidateProfile(BaseModel):
     languages: Annotated[list[Language], _cap(10)] = Field(default_factory=list)
     certifications: Annotated[list[ShortText], _cap(15)] = Field(default_factory=list)
     interests: Annotated[list[ShortText], _cap(15)] = Field(default_factory=list)
+    mobility: Mobility | None = Field(default=None, description="Zone géographique de recherche")
+    driving_licence: bool | None = Field(default=None, description="Permis de conduire mentionné")
+    has_vehicle: bool | None = Field(default=None, description="Véhicule personnel mentionné")

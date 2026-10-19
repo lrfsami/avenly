@@ -52,7 +52,12 @@ Règles :
 - Les coordonnées ont été remplacées par [CONFIDENTIEL] : ne cherche pas à les deviner
   et ne recopie jamais ce marqueur dans le profil.
 - Écris en français, de façon concise et professionnelle.
-- Pour chaque expérience, « kind » vaut : stage, alternance, emploi, projet, associatif ou autre.
+- Une entrée par expérience et par projet distinct : ne fusionne pas plusieurs projets
+  (un projet Java et un projet Unix font deux entrées).
+- « kind » : stage, alternance, emploi, projet, associatif ou autre. Utilise « autre » si le
+  CV ne permet pas de savoir (par exemple, rien n'indique qu'une activité était rémunérée).
+- Dates au format AAAA-MM (ou AAAA si le mois est inconnu) ; « en cours » pour une activité actuelle.
+- Renseigne la mobilité (ville, rayon en km), le permis et le véhicule s'ils sont mentionnés.
 """
 
 
