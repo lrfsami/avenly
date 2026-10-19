@@ -72,6 +72,12 @@ class Settings(BaseModel):
     llm_monthly_budget_usd: float = Field(default=5.0, ge=0, le=1000)
     llm_budget_per_client_usd: float = Field(default=3.0, ge=0, le=100)
 
+    # Signature des emails (facultatif) : sinon demandée au lancement de la campagne.
+    # Ces coordonnées restent sur ta machine : elles ne sont jamais envoyées au LLM.
+    signature_email: str | None = Field(default=None, max_length=320)
+    signature_phone: str | None = Field(default=None, max_length=30)
+    signature_linkedin: str | None = Field(default=None, max_length=300)
+
     log_level: LogLevel = "INFO"
 
     @field_validator("database_url")

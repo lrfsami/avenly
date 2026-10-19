@@ -413,3 +413,44 @@ def test_data_domain_targets_data_jobs():
 def test_live_data_domain():
     companies = find_companies("data", "Lyon", client_id="test", radius_km=10, max_results=20)
     assert len(companies) == 20
+
+
+def test_ranking_prefers_lba_then_size_then_distance():
+    from avenly.sourcing import rank_companies
+
+    def c(siret, name, headcount=None, source="recherche_entreprises", where=LYON):
+        return Company(
+            client_id="c", siret=siret, name=name, headcount=headcount, sources={source}, location=where
+        )
+
+    far = GeoPoint(latitude=45.9, longitude=5.2)
+    ranked = rank_companies(
+        [
+            c("11111111100011", "Aaa minuscule", "1-2"),
+            c("22222222200022", "Bbb grande loin", "250-499", where=far),
+            c("33333333300033", "Ccc grande proche", "250-499"),
+            c("44444444400044", "Zzz recruteur LBA", "6-9", source="la_bonne_alternance"),
+            c("55555555500055", "Ddd inconnue"),
+        ],
+        LYON,
+    )
+    assert [x.name for x in ranked] == [
+        "Zzz recruteur LBA",
+        "Ccc grande proche",
+        "Bbb grande loin",
+        "Aaa minuscule",
+        "Ddd inconnue",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("raw", "floor"), [("250-499", 250), ("10000+", 10000), ("6-9", 6), (None, 0), ("?", 0)]
+)
+def test_headcount_floor(raw, floor):
+    from avenly.sourcing import headcount_floor
+
+    assert headcount_floor(raw) == floor
+
+
+def test_data_domain_excludes_broad_consulting_codes():
+    assert not {"70.22Z", "73.20Z"} & set(get_domain("data").naf_codes)

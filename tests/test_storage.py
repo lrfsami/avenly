@@ -270,3 +270,18 @@ def test_engine_excludes_opted_out_companies(db):
         engine.sources = [source]
         results = engine.find("data", "Lyon", client_id="c", radius_km=10, max_results=50)
     assert len(results) == 2
+
+
+def test_changing_domain_codes_invalidates_cache(db, monkeypatch):
+    """Si les codes NAF/ROME d'un domaine changent, l'ancienne recherche n'est plus resservie."""
+    from avenly import sourcing
+    from avenly.sourcing import Domain
+
+    source = CountingSource(companies_around(LYON, 10))
+    with SourcingEngine(get_settings(), database=db) as engine:
+        engine.geocoder = FixedGeocoder()
+        engine.sources = [source]
+        engine.find("data", "Lyon", client_id="c", radius_km=10, max_results=50)
+        monkeypatch.setitem(sourcing.DOMAINS, "data", Domain("Data", romes=("M1405",), naf_codes=("62.01Z",)))
+        engine.find("data", "Lyon", client_id="c", radius_km=10, max_results=50)
+    assert source.calls == 2

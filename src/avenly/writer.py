@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import re
+import unicodedata
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 
@@ -62,15 +63,41 @@ def check_email(content: EmailContent, max_words: int | None = None) -> list[str
     return warnings
 
 
+# Mots trop courants pour désigner un groupe d'entreprises à eux seuls.
+COMMON_NAME_WORDS = {
+    "data", "digital", "groupe", "group", "informatique", "conseil", "consulting", "tech", "solutions",
+    "services", "france", "systemes", "systems", "software", "logiciels", "ingenierie", "societe",
+    "agence", "cabinet", "centre", "institut", "association", "the", "les", "des",
+}  # fmt: skip
+
+
+def group_key(name: str) -> str | None:
+    """Clé de groupe : « ACCESS DIFFUSION (A2I) » et « ACCESS HEBERGEMENT (AIH) » -> « access »."""
+    ascii_name = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode().lower()
+    ascii_name = re.sub(r"\(.*", " ", ascii_name)
+    words = [w for w in re.findall(r"[a-z0-9]+", ascii_name) if len(w) >= 4 and w not in COMMON_NAME_WORDS]
+    return words[0] if words else None
+
+
 def one_per_company(companies: Iterable[Company]) -> list[Company]:
-    """Garde un seul établissement par entreprise (SIREN) : on ne postule pas 3 fois chez Atos."""
+    """Une seule candidature par entreprise (SIREN) ET par groupe apparent (même premier mot distinctif).
+
+    On ne postule pas 3 fois chez Atos, ni chez « ACCESS DIFFUSION » et « ACCESS HEBERGEMENT ».
+    """
     seen: set[str] = set()
     result: list[Company] = []
     for company in companies:
-        if company.siren not in seen:
-            seen.add(company.siren)
-            result.append(company)
+        keys = {company.siren} | ({f"groupe:{g}"} if (g := group_key(company.name)) else set())
+        if keys & seen:
+            continue
+        seen |= keys
+        result.append(company)
     return result
+
+
+def has_channel(company: Company, enrichment: Enrichment | None) -> bool:
+    """Existe-t-il un moyen de candidater (email générique, page carrières, lien La Bonne Alternance) ?"""
+    return bool(company.apply_url or (enrichment and (enrichment.generic_emails or enrichment.careers_url)))
 
 
 class EmailWriter:

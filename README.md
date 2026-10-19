@@ -77,7 +77,8 @@ src/avenly/
 ├── llm.py        # LLM : profil candidat et résumé d'entreprise (interface multi-fournisseur), suivi des coûts
 ├── webfetch.py   # Lecture de sites web inconnus, protégée contre la SSRF
 ├── enricher.py   # Enrichissement des entreprises (site, carrières, emails génériques), en cache partagé
-└── writer.py     # Rédaction des candidatures : brouillons chiffrés, signature ajoutée localement
+├── writer.py     # Rédaction des candidatures : brouillons chiffrés, signature ajoutée localement
+└── cli.py        # Ligne de commande : campagne, brouillons, coûts, opposition
 tests/            # Tests pytest, APIs simulées (aucun appel réseau par défaut)
 ```
 
@@ -88,6 +89,7 @@ Choix d'architecture :
 - **Plusieurs clients dès le départ.** Chaque objet porte un `client_id`, en prévision d'une offre B2B pour les CFA.
 - **Le SIRET est la clé unique** : il sert à dédoublonner les résultats entre sources et, plus tard, à ne jamais contacter deux fois la même entreprise.
 - **Un catalogue d'entreprises partagé.** Les recherches récentes sont resservies depuis la base, et une même entreprise ne reçoit pas plus de 2 candidatures Avenly par mois, tous clients confondus, pour ne pas la saturer.
+- **Un ciblage par pertinence.** Les entreprises sont classées par chances d'accueillir un alternant : recruteurs La Bonne Alternance, puis taille de l'établissement, puis proximité. Une seule candidature par entreprise et par groupe, et aucune rédaction (donc aucun coût) quand il n'existe ni email ni page carrières.
 
 ## Installation
 
@@ -110,6 +112,18 @@ python -m avenly.security
 Pour activer La Bonne Alternance, demander un jeton sur [api.apprentissage.beta.gouv.fr](https://api.apprentissage.beta.gouv.fr) et le renseigner dans `LBA_API_TOKEN`. Sans jeton, seule l'API Recherche d'entreprises est utilisée.
 
 ## Utilisation
+
+```bash
+avenly campagne --cv data/mon_cv.pdf --nom "Prénom Nom" --domaine data --ville Annecy \
+                --debut "septembre 2027" --situation "3A cycle ingénieur" --max 10
+avenly brouillons          # relire les brouillons rédigés (déchiffrés)
+avenly couts               # dépenses LLM du mois, par tâche et par modèle
+avenly opposition 123456789   # ne plus jamais contacter une entreprise
+```
+
+Avant toute dépense, la campagne affiche un coût estimé et demande confirmation.
+
+En Python :
 
 ```python
 from avenly.profiler import read_cv
@@ -146,7 +160,7 @@ pre-commit run --all-files  # tous les contrôles, dont la détection de secrets
 - [x] Enrichissement : site web vérifié, page carrières, emails génériques (version gratuite)
 - [x] Rédaction de l'email par LLM (brouillons chiffrés, relus avant envoi)
 - [ ] Envoi SMTP
-- [ ] Interface en ligne de commande
+- [x] Interface en ligne de commande (`avenly campagne`, `brouillons`, `couts`, `opposition`)
 
 **Mois 2 : l'envoi automatisé**
 - [x] Base de données : catalogue partagé, cache des recherches, historique des candidatures (pas de double contact), liste d'opposition

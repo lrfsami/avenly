@@ -77,7 +77,8 @@ src/avenly/
 ├── llm.py        # LLM: candidate profile and company summary (provider-agnostic), cost tracking
 ├── webfetch.py   # SSRF-safe fetching of unknown websites
 ├── enricher.py   # Company enrichment (website, careers, generic emails), shared cache
-└── writer.py     # Application drafting: encrypted drafts, signature added locally
+├── writer.py     # Application drafting: encrypted drafts, signature added locally
+└── cli.py        # Command line: campaign, drafts, costs, opt-outs
 tests/            # pytest suite, mocked APIs (no network calls by default)
 ```
 
@@ -88,6 +89,7 @@ Design choices:
 - **Multi-tenant from day one.** Every object carries a `client_id`, anticipating a B2B offer for training centers.
 - **SIRET (French company ID) is the unique key**: it deduplicates results across sources and will later prevent contacting the same company twice.
 - **A shared company catalogue.** Recent searches are served from the database, and a given company receives at most 2 Avenly applications per month across all clients, to avoid flooding it.
+- **Relevance-based targeting.** Companies are ranked by their likelihood of hiring an apprentice: La Bonne Alternance recruiters first, then establishment size, then distance. One application per company and per group, and no drafting (hence no cost) when there is neither an email nor a careers page.
 
 ## Installation
 
@@ -110,6 +112,18 @@ python -m avenly.security
 To enable La Bonne Alternance, request a token at [api.apprentissage.beta.gouv.fr](https://api.apprentissage.beta.gouv.fr) and set `LBA_API_TOKEN`. Without a token, only the Recherche d'entreprises API is used.
 
 ## Usage
+
+```bash
+avenly campagne --cv data/my_resume.pdf --nom "First Last" --domaine data --ville Annecy \
+                --debut "septembre 2027" --situation "3rd year engineering school" --max 10
+avenly brouillons          # review drafted emails (decrypted)
+avenly couts               # LLM spending this month, by task and model
+avenly opposition 123456789   # never contact a company again
+```
+
+Before spending anything, a campaign shows an estimated cost and asks for confirmation.
+
+From Python:
 
 ```python
 from avenly.profiler import read_cv
@@ -146,7 +160,7 @@ pre-commit run --all-files  # all checks, including secret detection
 - [x] Enrichment: verified website, careers page, generic emails (free version)
 - [x] LLM email drafting (encrypted drafts, reviewed before sending)
 - [ ] SMTP sending
-- [ ] Command-line interface
+- [x] Command-line interface (`avenly campagne`, `brouillons`, `couts`, `opposition`)
 
 **Month 2: automated sending**
 - [x] Database: shared catalogue, search cache, application history (no duplicate contact), opt-out list

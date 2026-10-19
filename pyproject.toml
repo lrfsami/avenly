@@ -28,6 +28,9 @@ dev = [
     "pre-commit>=4.0",
 ]
 
+[project.scripts]
+avenly = "avenly.cli:main"
+
 [tool.setuptools.packages.find]
 where = ["src"]
 

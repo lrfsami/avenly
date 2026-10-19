@@ -60,7 +60,7 @@ def crypto() -> CryptoManager:
 
 
 def company(siret: str, **extra) -> Company:
-    return Company(**({"client_id": "moi", "siret": siret, "name": f"Entreprise {siret[:3]}"} | extra))
+    return Company(**({"client_id": "moi", "siret": siret, "name": f"ACME{siret[:9]}"} | extra))
 
 
 def enrichment(siren: str, **extra) -> Enrichment:
@@ -140,7 +140,7 @@ def test_draft_is_stored_encrypted(db, crypto):
 
     drafts = db.list_drafts(crypto, "moi")
     assert drafts[0]["body"].startswith("Madame, Monsieur,")
-    assert drafts[0]["company"] == "Entreprise 111"
+    assert drafts[0]["company"] == "ACME111111111"
 
 
 def test_drafts_are_unreadable_with_another_key(db, crypto):
@@ -239,3 +239,27 @@ def test_email_length_limit_is_configurable(monkeypatch):
     monkeypatch.setenv("EMAIL_MAX_WORDS", "80")
     get_settings.cache_clear()
     assert any("long" in w for w in check_email(EmailContent(subject="s", body=body)))
+
+
+@pytest.mark.parametrize(
+    ("names", "kept"),
+    [
+        (["ACCESS DIFFUSION (ACCESS INGENIERIE INFORMATIQUE (A2I))", "ACCESS HEBERGEMENT (AIH)"], 1),
+        (["CAPGEMINI TECHNOLOGY SERVICES", "CAPGEMINI ENGINEERING"], 1),
+        (["DATA CONSULTING LYON", "DATA SOLUTIONS ANNECY"], 2),  # « data » seul ne fait pas un groupe
+        (["ALTEN", "ATOS"], 2),
+    ],
+)
+def test_one_per_group(names, kept):
+    sites = [Company(client_id="c", siret=f"{i:09d}00011", name=name) for i, name in enumerate(names, 1)]
+    assert len(one_per_company(sites)) == kept
+
+
+def test_has_channel():
+    from avenly.writer import has_channel
+
+    target = company("11111111100011")
+    assert not has_channel(target, None)
+    assert not has_channel(target, enrichment("111111111", generic_emails=[], careers_url=None))
+    assert has_channel(target, enrichment("111111111", generic_emails=[], careers_url="https://a.fr/jobs"))
+    assert has_channel(company("11111111100011", apply_url="https://lba.fr/x"), None)

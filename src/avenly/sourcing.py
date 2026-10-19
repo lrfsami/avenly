@@ -13,6 +13,7 @@ Usage :
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
@@ -32,7 +33,7 @@ from urllib3.util.retry import Retry
 
 from avenly.config import Settings, get_settings
 from avenly.models import Company, GeoPoint
-from avenly.storage import Database
+from avenly.storage import Database, distance_km
 
 logger = logging.getLogger(__name__)
 
@@ -69,8 +70,9 @@ DOMAINS: dict[str, Domain] = {
         "Data / IA",
         # Data analyst (M1419), data scientist (M1405), data engineer (M1811), développement (M1805)
         romes=("M1419", "M1405", "M1811", "M1805"),
-        # Conseil et services numériques, traitement de données, études de marché, conseil en gestion
-        naf_codes=("62.01Z", "62.02A", "62.03Z", "63.11Z", "63.12Z", "73.20Z", "70.22Z"),
+        # Programmation, conseil et services numériques, traitement de données et hébergement.
+        # (70.22Z « conseil de gestion » et 73.20Z « études de marché » étaient trop larges.)
+        naf_codes=("62.01Z", "62.02A", "62.03Z", "63.11Z", "63.12Z"),
     ),
     "marketing": Domain(
         "Marketing / Communication",
@@ -346,6 +348,8 @@ class RechercheEntreprisesSource(CompanySource):
                     "per_page": self.PER_PAGE,
                     "page": page,
                     "limite_matching_etablissements": 5,
+                    # Les entreprises les plus grandes d'abord : plus de chances d'accueillir un alternant.
+                    "sort_by_size": "true",
                 },
             )
             for unit in data.get("results") or []:
@@ -447,8 +451,10 @@ class SourcingEngine:
         radius_km: float = 20,
         max_results: int = 100,
     ) -> list[Company]:
-        domain_key = domain.strip().lower()
-        target = get_domain(domain_key)
+        target = get_domain(domain)
+        # La clé de cache inclut les codes du domaine : s'ils changent, l'ancien cache est ignoré.
+        codes = ",".join((*target.romes, *target.naf_codes))
+        domain_key = f"{domain.strip().lower()}#{hashlib.sha256(codes.encode()).hexdigest()[:8]}"
         query = SearchQuery(
             client_id=client_id,
             location=self.geocoder.locate(city),
@@ -472,7 +478,8 @@ class SourcingEngine:
             )
         # Les entreprises qui ont demandé à ne plus être contactées sont exclues pour tous.
         opted_out = self.database.opted_out_sirens(c.siren for c in companies)
-        return rank_companies(c for c in companies if c.siren not in opted_out)[:max_results]
+        kept = (c for c in companies if c.siren not in opted_out)
+        return rank_companies(kept, query.location)[:max_results]
 
     def search(self, query: SearchQuery) -> list[Company]:
         merged: dict[str, Company] = {}
@@ -492,12 +499,38 @@ class SourcingEngine:
         if failures == len(self.sources):
             raise SourcingError("Toutes les sources ont échoué.")
 
-        return rank_companies(merged.values())[: query.max_results]
+        return rank_companies(merged.values(), query.location)[: query.max_results]
 
 
-def rank_companies(companies: Iterable[Company]) -> list[Company]:
-    """Marché caché d'abord : les recruteurs La Bonne Alternance en tête, puis par nom."""
-    return sorted(companies, key=lambda c: (LaBonneAlternanceSource.name not in c.sources, c.name.lower()))
+def headcount_floor(headcount: str | None) -> int:
+    """« 250-499 » -> 250, « 10000+ » -> 10000, inconnu -> 0."""
+    match = re.match(r"\s*(\d+)", headcount or "")
+    return int(match.group(1)) if match else 0
+
+
+def rank_companies(companies: Iterable[Company], origin: GeoPoint | None = None) -> list[Company]:
+    """Classe les entreprises par chances de recruter un alternant.
+
+    1. Recruteurs La Bonne Alternance (ils déclarent recruter en alternance) ;
+    2. taille de l'établissement : une structure de 50 personnes accueille bien plus
+       souvent un alternant qu'une structure de 2 personnes ;
+    3. proximité (si le point de départ est connu) ; 4. nom, pour un ordre stable.
+    """
+
+    def distance(company: Company) -> float:
+        if origin is None or company.location is None:
+            return 0.0
+        return distance_km(origin, company.location)
+
+    return sorted(
+        companies,
+        key=lambda c: (
+            LaBonneAlternanceSource.name not in c.sources,
+            -min(headcount_floor(c.headcount), 1000),  # au-delà de 1000, la taille ne départage plus
+            round(distance(c)),
+            c.name.lower(),
+        ),
+    )
 
 
 def find_companies(
