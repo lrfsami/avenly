@@ -13,7 +13,9 @@ from __future__ import annotations
 
 import argparse
 import logging
+import secrets
 import sys
+import time
 from collections.abc import Callable, Sequence
 from typing import TextIO
 
@@ -25,8 +27,17 @@ from avenly.llm import PRICES_PER_MTOK, BudgetExceededError, ClaudeClient, LLMEr
 from avenly.models import ApplicationContext, Signature
 from avenly.profiler import CVError, read_cv
 from avenly.security import CryptoManager, SecurityError
+from avenly.sender import (
+    EmailSender,
+    OutgoingEmail,
+    SendError,
+    build_message,
+    check_smtp_settings,
+    load_attachment,
+    recipient_problem,
+)
 from avenly.sourcing import DOMAINS, SourcingError, find_companies
-from avenly.storage import Database, LLMUsageRecord, start_of_month
+from avenly.storage import ApplicationStatus, Database, LLMUsageRecord, start_of_month
 from avenly.webfetch import SafeFetcher
 from avenly.writer import EmailWriter, has_channel, one_per_company
 
@@ -38,7 +49,17 @@ MAX_ATTEMPTS_FACTOR = 5
 # Nombre d'entreprises enrichies en même temps.
 ENRICH_BATCH = 4
 
-USER_ERRORS = (CVError, LLMError, SourcingError, ConfigError, SecurityError, ValueError)
+USER_ERRORS = (CVError, LLMError, SourcingError, ConfigError, SecurityError, SendError, ValueError)
+
+# Remplaçable dans les tests (on n'attend pas réellement plusieurs minutes entre deux envois).
+SLEEP = time.sleep
+STATUS_LABELS = {
+    ApplicationStatus.DRAFT: "à relire",
+    ApplicationStatus.APPROVED: "validé",
+    ApplicationStatus.SENT: "envoyé",
+    ApplicationStatus.REPLIED: "réponse reçue",
+    ApplicationStatus.REFUSED: "refusé",
+}
 
 
 # --------------------------------------------------------------------------
@@ -136,16 +157,147 @@ def cmd_campagne(args: argparse.Namespace, *, out: TextIO, ask: Callable[[str], 
 
 
 def cmd_brouillons(args: argparse.Namespace, *, out: TextIO, ask: Callable[[str], str]) -> int:
-    drafts = Database().list_drafts(CryptoManager(), args.client)
+    status = ApplicationStatus.DRAFT if args.a_relire else None
+    drafts = Database().list_drafts(CryptoManager(), args.client, status=status)
     if not drafts:
-        out.write("Aucun brouillon pour l'instant. Lance d'abord : avenly campagne …\n")
+        out.write("Aucun brouillon à afficher. Lance une campagne : avenly campagne …\n")
         return 0
-    for number, draft in enumerate(drafts, start=1):
+    for draft in drafts:
         channel = draft["recipient_email"] or draft["careers_url"] or "canal à trouver"
+        status = STATUS_LABELS.get(draft["status"], draft["status"])
         out.write("=" * 72 + "\n")
-        out.write(f"#{number} {draft['company']}  →  {channel}\n")
+        out.write(f"#{draft['id']} [{status}] {draft['company']}  →  {channel}\n")
         out.write(f"Objet : {draft['subject']}\n\n{draft['body']}\n\n")
-    out.write(f"{len(drafts)} brouillon(s).\n")
+    out.write(
+        f"{len(drafts)} brouillon(s). Pour valider : avenly valider <numéros> (ex. : avenly valider 3 5)\n"
+    )
+    return 0
+
+
+def cmd_valider(args: argparse.Namespace, *, out: TextIO, ask: Callable[[str], str]) -> int:
+    approved = Database().approve_drafts(args.client, args.numeros)
+    ignored = sorted(set(args.numeros) - set(approved))
+    if approved:
+        out.write(f"✅ Brouillon(s) validé(s) : {', '.join(f'#{n}' for n in approved)}\n")
+    if ignored:
+        out.write(
+            f"Ignoré(s) : {', '.join(f'#{n}' for n in ignored)} (numéro inconnu, ou déjà validé ou envoyé).\n"
+        )
+    if approved:
+        out.write("Envoie-les avec : avenly envoyer --cv <ton CV en PDF>\n")
+    return 0
+
+
+def cmd_supprimer(args: argparse.Namespace, *, out: TextIO, ask: Callable[[str], str]) -> int:
+    deleted = Database().delete_drafts(args.client, args.numeros)
+    ignored = sorted(set(args.numeros) - set(deleted))
+    if deleted:
+        out.write(f"🗑️  Brouillon(s) supprimé(s) : {', '.join(f'#{n}' for n in deleted)}\n")
+    if ignored:
+        out.write(f"Ignoré(s) : {', '.join(f'#{n}' for n in ignored)} (numéro inconnu ou déjà envoyé).\n")
+    return 0
+
+
+def cmd_envoyer(args: argparse.Namespace, *, out: TextIO, ask: Callable[[str], str]) -> int:
+    settings = get_settings()
+    check_smtp_settings(settings)  # d'abord : inutile de préparer un envoi impossible
+    attachment = load_attachment(args.cv)
+    db = Database()
+    approved = db.list_drafts(CryptoManager(), args.client, status=ApplicationStatus.APPROVED)
+
+    blocked = [
+        (d, problem)
+        for d in approved
+        if d["recipient_email"] and (problem := recipient_problem(d["recipient_email"]))
+    ]
+    if blocked:
+        out.write(
+            "⛔ Bloqué(s), adresse refusée par les règles actuelles (supprime ou remplace ces brouillons) :\n"
+        )
+        for draft, problem in blocked:
+            out.write(f"  #{draft['id']} {draft['company']}  →  {draft['recipient_email']} ({problem})\n")
+        out.write("\n")
+    blocked_ids = {d["id"] for d, _ in blocked}
+    by_email = [d for d in approved if d["recipient_email"] and d["id"] not in blocked_ids]
+    manual = [d for d in approved if not d["recipient_email"]]
+
+    if manual:
+        out.write("À envoyer à la main (pas d'email, seulement une page de candidature) :\n")
+        for draft in manual:
+            out.write(
+                f"  #{draft['id']} {draft['company']}  →  {draft['careers_url'] or 'canal à trouver'}\n"
+            )
+        out.write("  (copie le texte affiché par « avenly brouillons »)\n\n")
+    if not by_email:
+        out.write(
+            "Aucun brouillon validé à envoyer par email. Valide-les d'abord : avenly valider <numéros>\n"
+        )
+        return 0
+
+    remaining = settings.send_daily_limit - db.sent_today(args.client)
+    if not args.essai and remaining <= 0:
+        out.write(f"Limite quotidienne atteinte ({settings.send_daily_limit} emails). Reprends demain.\n")
+        return 0
+    batch = by_email[:1] if args.essai else by_email[: min(args.max, remaining)]
+
+    if args.essai:
+        out.write(
+            f"MODE ESSAI : le 1er email validé part vers TOI ({settings.smtp_user}), pas vers l'entreprise.\n"
+        )
+    else:
+        out.write(f"{len(batch)} email(s) prêt(s) à partir :\n")
+        for number, draft in enumerate(batch, start=1):
+            out.write(f"  {number}. {draft['company']:<34} → {draft['recipient_email']}\n")
+        out.write(
+            f"Pièce jointe : {attachment[0]} · Espacement : {settings.send_min_delay_seconds // 60} à "
+            f"{settings.send_max_delay_seconds // 60} min entre deux emails · "
+            f"Limite : {remaining} restant(s) aujourd'hui\n"
+        )
+    if ask(
+        f"\nEnvoyer {'cet email de test' if args.essai else f'ces {len(batch)} email(s)'} ? [o/N] "
+    ).strip().lower() not in ("o", "oui"):
+        out.write("Envoi annulé : rien n'est parti.\n")
+        return 0
+
+    sent = 0
+    with EmailSender(settings) as sender:
+        for index, draft in enumerate(batch, start=1):
+            email = OutgoingEmail(
+                to=sender.sender_email if args.essai else draft["recipient_email"],
+                subject=("[ESSAI Avenly] " if args.essai else "") + draft["subject"],
+                body=draft["body"],
+            )
+            message = build_message(
+                email, sender_name=args.nom or "", sender_email=sender.sender_email, attachment=attachment
+            )
+            if args.un_par_un and not args.essai:
+                out.write(f"\n──── Email {index}/{len(batch)} " + "─" * 40 + "\n")
+                out.write(
+                    f"À : {email.to}\nObjet : {email.subject}\n"
+                    f"Pièce jointe : {attachment[0]}\n\n{email.body}\n"
+                )
+                answer = (
+                    ask("\nEnvoyer cet email ? [o = oui / n = passer / q = tout arrêter] ").strip().lower()
+                )
+                if answer == "q":
+                    out.write("Arrêt demandé : les emails restants ne sont pas envoyés.\n")
+                    break
+                if answer not in ("o", "oui"):
+                    out.write("Passé.\n")
+                    continue
+            sender.send(message)
+            sent += 1
+            if not args.essai:
+                db.record_application(args.client, draft["siret"], ApplicationStatus.SENT)
+            out.write(f"  ✅ Envoyé : {draft['company']} → {email.to}\n")
+            if not args.essai and index < len(batch):
+                delay = secrets.SystemRandom().uniform(
+                    settings.send_min_delay_seconds, settings.send_max_delay_seconds
+                )
+                out.write(f"     Prochain envoi dans {delay / 60:.1f} min (Ctrl + C pour arrêter)…\n")
+                SLEEP(delay)
+
+    out.write(f"\n{sent} email(s) envoyé(s).\n")
     return 0
 
 
@@ -206,10 +358,35 @@ def build_parser() -> argparse.ArgumentParser:
     campagne.set_defaults(handler=cmd_campagne)
 
     brouillons = commands.add_parser("brouillons", help="relire les brouillons rédigés")
+    brouillons.add_argument(
+        "--a-relire", action="store_true", help="seulement les brouillons pas encore validés"
+    )
     brouillons.set_defaults(handler=cmd_brouillons)
+
+    supprimer = commands.add_parser("supprimer", help="supprimer des brouillons (pas encore envoyés)")
+    supprimer.add_argument("numeros", nargs="+", type=int, help="numéros des brouillons")
+    supprimer.set_defaults(handler=cmd_supprimer)
 
     couts = commands.add_parser("couts", help="voir les dépenses LLM du mois")
     couts.set_defaults(handler=cmd_couts)
+
+    valider = commands.add_parser("valider", help="valider des brouillons pour l'envoi")
+    valider.add_argument(
+        "numeros", nargs="+", type=int, help="numéros des brouillons (voir avenly brouillons)"
+    )
+    valider.set_defaults(handler=cmd_valider)
+
+    envoyer = commands.add_parser("envoyer", help="envoyer les brouillons validés (avec confirmation)")
+    envoyer.add_argument("--cv", required=True, help="CV en PDF à joindre")
+    envoyer.add_argument("--nom", help="ton nom, affiché comme expéditeur")
+    envoyer.add_argument("--max", type=int, default=5, help="nombre maximum d'emails envoyés (défaut : 5)")
+    envoyer.add_argument(
+        "--essai", action="store_true", help="envoyer le 1er email validé à toi-même seulement"
+    )
+    envoyer.add_argument(
+        "--un-par-un", action="store_true", help="afficher et confirmer chaque email avant envoi"
+    )
+    envoyer.set_defaults(handler=cmd_envoyer)
 
     opposition = commands.add_parser("opposition", help="ne plus jamais contacter une entreprise")
     opposition.add_argument("siren", help="SIREN de l'entreprise (9 chiffres)")

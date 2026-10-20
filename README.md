@@ -40,7 +40,7 @@ flowchart LR
 | `llm.py` | Extraction du profil (compétences, expériences) par LLM, avec budget de dépense | ✅ |
 | `enricher.py` | Site web vérifié, résumé d'activité, page carrières, emails génériques | ✅ |
 | `writer.py` | Rédaction de l'email (moins de 120 mots), brouillons chiffrés à relire | ✅ |
-| `sender.py` | Envoi espacé dans le temps | 🚧 |
+| `sender.py` | Envoi SMTP chiffré des brouillons validés, espacé dans le temps | ✅ |
 
 ## Sécurité dès la conception
 
@@ -62,6 +62,7 @@ Avenly manipule des CV : la protection des données n'est pas une option ajouté
 - **Lecture de sites web sans risque (SSRF).** Seuls les noms de domaine pointant vers des adresses publiques sont contactés : vérification avant la requête, puis de l'adresse réellement jointe (contre le DNS rebinding), redirections revalidées une à une, taille et type de contenu bornés, robots.txt respecté.
 - **Emails nominatifs jamais conservés.** L'enrichissement ne garde que les adresses génériques du domaine de l'entreprise (rh@, recrutement@, contact@…).
 - **Coordonnées du candidat jamais envoyées au LLM.** L'IA rédige le corps de l'email ; la signature (nom, téléphone, email) est ajoutée localement. Les brouillons sont chiffrés en base (Fernet) et chaque texte généré est contrôlé (longueur, coordonnées, marqueurs) avant relecture.
+- **Aucun envoi sans validation humaine.** Chaque brouillon doit être validé, puis l'envoi confirmé (globalement ou email par email). Connexion SMTP toujours chiffrée avec vérification du certificat, protection contre l'injection d'en-têtes, emails en texte brut sans pixel de suivi, limite quotidienne et délais aléatoires.
 - **Analyse statique.** Le lint `ruff` inclut les règles de sécurité Bandit.
 
 ## Architecture
@@ -78,7 +79,8 @@ src/avenly/
 ├── webfetch.py   # Lecture de sites web inconnus, protégée contre la SSRF
 ├── enricher.py   # Enrichissement des entreprises (site, carrières, emails génériques), en cache partagé
 ├── writer.py     # Rédaction des candidatures : brouillons chiffrés, signature ajoutée localement
-└── cli.py        # Ligne de commande : campagne, brouillons, coûts, opposition
+├── sender.py     # Envoi SMTP chiffré des candidatures validées
+└── cli.py        # Ligne de commande : campagne, brouillons, valider, envoyer, coûts, opposition
 tests/            # Tests pytest, APIs simulées (aucun appel réseau par défaut)
 ```
 
@@ -117,6 +119,8 @@ Pour activer La Bonne Alternance, demander un jeton sur [api.apprentissage.beta.
 avenly campagne --cv data/mon_cv.pdf --nom "Prénom Nom" --domaine data --ville Annecy \
                 --debut "septembre 2027" --situation "3A cycle ingénieur" --max 10
 avenly brouillons          # relire les brouillons rédigés (déchiffrés)
+avenly valider 3 5          # valider les brouillons n°3 et n°5
+avenly envoyer --cv data/mon_cv.pdf --un-par-un   # envoyer les brouillons validés, un par un
 avenly couts               # dépenses LLM du mois, par tâche et par modèle
 avenly opposition 123456789   # ne plus jamais contacter une entreprise
 ```
@@ -159,7 +163,7 @@ pre-commit run --all-files  # tous les contrôles, dont la détection de secrets
 - [x] Extraction du profil par LLM (JSON validé par Pydantic)
 - [x] Enrichissement : site web vérifié, page carrières, emails génériques (version gratuite)
 - [x] Rédaction de l'email par LLM (brouillons chiffrés, relus avant envoi)
-- [ ] Envoi SMTP
+- [x] Envoi SMTP (double validation, mode essai, limite quotidienne)
 - [x] Interface en ligne de commande (`avenly campagne`, `brouillons`, `couts`, `opposition`)
 
 **Mois 2 : l'envoi automatisé**

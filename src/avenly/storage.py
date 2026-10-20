@@ -79,6 +79,7 @@ class UTCDateTime(TypeDecorator[datetime]):
 
 class ApplicationStatus(StrEnum):
     DRAFT = "draft"
+    APPROVED = "approved"  # validé par le candidat, prêt à partir
     SENT = "sent"
     REPLIED = "replied"
     REFUSED = "refused"
@@ -455,7 +456,10 @@ class Database:
                 .join(ApplicationRecord, ApplicationRecord.siret == CompanyRecord.siret)
                 .where(
                     ApplicationRecord.created_at >= since,
-                    ApplicationRecord.status != ApplicationStatus.DRAFT,  # un brouillon n'a rien envoyé
+                    # Seules les candidatures réellement parties comptent (pas les brouillons).
+                    ApplicationRecord.status.in_(
+                        [ApplicationStatus.SENT, ApplicationStatus.REPLIED, ApplicationStatus.REFUSED]
+                    ),
                 )
                 .group_by(CompanyRecord.siren)
             ).all()
@@ -559,23 +563,97 @@ class Database:
             draft.model = model
             draft.created_at = utcnow()
 
-    def list_drafts(self, crypto: CryptoManager, client_id: str) -> list[dict[str, str | None]]:
-        """Brouillons d'un client, déchiffrés (avec le nom de l'entreprise)."""
+    def list_drafts(
+        self, crypto: CryptoManager, client_id: str, *, status: ApplicationStatus | None = None
+    ) -> list[dict[str, str | int | None]]:
+        """Brouillons d'un client, déchiffrés, avec leur numéro, l'entreprise et le statut."""
+        query = (
+            select(DraftRecord, CompanyRecord.name, ApplicationRecord.status)
+            .join(CompanyRecord, CompanyRecord.siret == DraftRecord.siret)
+            .join(
+                ApplicationRecord,
+                (ApplicationRecord.client_id == DraftRecord.client_id)
+                & (ApplicationRecord.siret == DraftRecord.siret),
+            )
+            .where(DraftRecord.client_id == client_id)
+            .order_by(DraftRecord.id)
+        )
+        if status is not None:
+            query = query.where(ApplicationRecord.status == status)
         with self.session() as session:
-            rows = session.execute(
-                select(DraftRecord, CompanyRecord.name)
-                .join(CompanyRecord, CompanyRecord.siret == DraftRecord.siret)
-                .where(DraftRecord.client_id == client_id)
-                .order_by(DraftRecord.created_at)
-            ).all()
+            rows = session.execute(query).all()
         return [
             {
+                "id": draft.id,
                 "siret": draft.siret,
                 "company": name,
+                "status": app_status,
                 "subject": crypto.decrypt_text(draft.subject_encrypted),
                 "body": crypto.decrypt_text(draft.body_encrypted),
                 "recipient_email": draft.recipient_email,
                 "careers_url": draft.careers_url,
             }
-            for draft, name in rows
+            for draft, name, app_status in rows
         ]
+
+    def approve_drafts(self, client_id: str, draft_ids: list[int]) -> list[int]:
+        """Valide des brouillons (par numéro). Renvoie les numéros réellement validés."""
+        with self.session() as session:
+            drafts = session.scalars(
+                select(DraftRecord).where(DraftRecord.client_id == client_id, DraftRecord.id.in_(draft_ids))
+            ).all()
+            approved = []
+            for draft in drafts:
+                application = session.scalar(
+                    select(ApplicationRecord).where(
+                        ApplicationRecord.client_id == client_id, ApplicationRecord.siret == draft.siret
+                    )
+                )
+                if application is not None and application.status == ApplicationStatus.DRAFT:
+                    application.status = ApplicationStatus.APPROVED
+                    application.updated_at = utcnow()
+                    approved.append(draft.id)
+        return sorted(approved)
+
+    def delete_drafts(self, client_id: str, draft_ids: list[int]) -> list[int]:
+        """Supprime des brouillons pas encore envoyés, et leur marque « déjà contactée ».
+
+        L'entreprise pourra être reciblée plus tard avec un nouveau brouillon. Un brouillon
+        déjà ENVOYÉ n'est jamais supprimé : l'historique des envois doit rester exact.
+        """
+        deletable = (ApplicationStatus.DRAFT, ApplicationStatus.APPROVED)
+        deleted = []
+        with self.session() as session:
+            drafts = session.scalars(
+                select(DraftRecord).where(DraftRecord.client_id == client_id, DraftRecord.id.in_(draft_ids))
+            ).all()
+            for draft in drafts:
+                application = session.scalar(
+                    select(ApplicationRecord).where(
+                        ApplicationRecord.client_id == client_id, ApplicationRecord.siret == draft.siret
+                    )
+                )
+                if application is not None and application.status not in deletable:
+                    continue
+                if application is not None:
+                    session.delete(application)
+                session.delete(draft)
+                deleted.append(draft.id)
+        return sorted(deleted)
+
+    def sent_today(self, client_id: str) -> int:
+        """Nombre d'emails envoyés aujourd'hui (UTC) par ce client : sert à la limite quotidienne."""
+        today = utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+        with self.session() as session:
+            return (
+                session.scalar(
+                    select(func.count())
+                    .select_from(ApplicationRecord)
+                    .where(
+                        ApplicationRecord.client_id == client_id,
+                        ApplicationRecord.status == ApplicationStatus.SENT,
+                        ApplicationRecord.updated_at >= today,
+                    )
+                )
+                or 0
+            )

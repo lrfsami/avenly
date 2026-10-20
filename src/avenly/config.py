@@ -72,6 +72,17 @@ class Settings(BaseModel):
     llm_monthly_budget_usd: float = Field(default=5.0, ge=0, le=1000)
     llm_budget_per_client_usd: float = Field(default=3.0, ge=0, le=100)
 
+    # Envoi des emails depuis la boîte du candidat (SMTP, chiffré obligatoirement).
+    # Gmail : smtp.gmail.com, port 465, et un « mot de passe d'application » (jamais le vrai).
+    smtp_host: str = Field(default="smtp.gmail.com", pattern=r"^[a-z0-9.\-]+$")
+    smtp_port: int = Field(default=465)
+    smtp_user: str | None = Field(default=None, max_length=320)
+    smtp_app_password: SecretStr | None = None
+    # Garde-fous de délivrabilité : pas plus de N emails par jour, espacés aléatoirement.
+    send_daily_limit: int = Field(default=15, ge=1, le=50)
+    send_min_delay_seconds: int = Field(default=120, ge=0, le=3600)
+    send_max_delay_seconds: int = Field(default=360, ge=0, le=7200)
+
     # Signature des emails (facultatif) : sinon demandée au lancement de la campagne.
     # Ces coordonnées restent sur ta machine : elles ne sont jamais envoyées au LLM.
     signature_email: str | None = Field(default=None, max_length=320)
@@ -87,11 +98,19 @@ class Settings(BaseModel):
             raise ValueError("seuls SQLite et PostgreSQL sont supportés")
         return value
 
-    @field_validator("fernet_key", "lba_api_token", "anthropic_api_key", mode="before")
+    @field_validator("fernet_key", "lba_api_token", "anthropic_api_key", "smtp_app_password", mode="before")
     @classmethod
     def _empty_secret_is_none(cls, value: object) -> object:
         if isinstance(value, str) and not value.strip():
             return None
+        return value
+
+    @field_validator("smtp_port")
+    @classmethod
+    def _encrypted_port(cls, value: int) -> int:
+        # 465 = SMTP chiffré dès la connexion (SMTPS) ; 587 = STARTTLS (chiffrement obligatoire, vérifié).
+        if value not in (465, 587):
+            raise ValueError("seuls les ports chiffrés 465 (SMTPS) et 587 (STARTTLS) sont autorisés")
         return value
 
     @field_validator("log_level", mode="before")

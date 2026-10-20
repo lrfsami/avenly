@@ -40,7 +40,7 @@ flowchart LR
 | `llm.py` | LLM profile extraction (skills, experience) with a spending budget | ✅ |
 | `enricher.py` | Verified website, activity summary, careers page, generic emails | ✅ |
 | `writer.py` | Email drafting (under 120 words), encrypted drafts to review | ✅ |
-| `sender.py` | Spaced-out sending | 🚧 |
+| `sender.py` | Encrypted SMTP sending of approved drafts, spaced out over time | ✅ |
 
 ## Security by design
 
@@ -62,6 +62,7 @@ Avenly handles résumés: data protection is not an afterthought, it shapes the 
 - **Safe web fetching (SSRF).** Only domains resolving to public addresses are contacted: checked before the request, then the actually connected address is re-checked (against DNS rebinding), every redirect is re-validated, size and content type are bounded, robots.txt is honoured.
 - **Personal emails never stored.** Enrichment only keeps generic addresses on the company's own domain (hr@, recruitment@, contact@…).
 - **Candidate contact details never sent to the LLM.** The AI writes the email body; the signature (name, phone, email) is added locally. Drafts are encrypted in the database (Fernet) and every generated text is checked (length, contact details, markers) before review.
+- **No sending without human approval.** Every draft must be approved, then sending confirmed (globally or email by email). SMTP connection always encrypted with certificate verification, header-injection protection, plain-text emails without tracking pixels, daily limit and random delays.
 - **Static analysis.** The `ruff` linter includes Bandit security rules.
 
 ## Architecture
@@ -78,7 +79,8 @@ src/avenly/
 ├── webfetch.py   # SSRF-safe fetching of unknown websites
 ├── enricher.py   # Company enrichment (website, careers, generic emails), shared cache
 ├── writer.py     # Application drafting: encrypted drafts, signature added locally
-└── cli.py        # Command line: campaign, drafts, costs, opt-outs
+├── sender.py     # Encrypted SMTP sending of approved applications
+└── cli.py        # Command line: campaign, drafts, approve, send, costs, opt-outs
 tests/            # pytest suite, mocked APIs (no network calls by default)
 ```
 
@@ -117,6 +119,8 @@ To enable La Bonne Alternance, request a token at [api.apprentissage.beta.gouv.f
 avenly campagne --cv data/my_resume.pdf --nom "First Last" --domaine data --ville Annecy \
                 --debut "septembre 2027" --situation "3rd year engineering school" --max 10
 avenly brouillons          # review drafted emails (decrypted)
+avenly valider 3 5          # approve drafts #3 and #5
+avenly envoyer --cv data/my_resume.pdf --un-par-un   # send approved drafts, one at a time
 avenly couts               # LLM spending this month, by task and model
 avenly opposition 123456789   # never contact a company again
 ```
@@ -159,7 +163,7 @@ pre-commit run --all-files  # all checks, including secret detection
 - [x] LLM profile extraction (Pydantic-validated JSON)
 - [x] Enrichment: verified website, careers page, generic emails (free version)
 - [x] LLM email drafting (encrypted drafts, reviewed before sending)
-- [ ] SMTP sending
+- [x] SMTP sending (double approval, test mode, daily limit)
 - [x] Command-line interface (`avenly campagne`, `brouillons`, `couts`, `opposition`)
 
 **Month 2: automated sending**
