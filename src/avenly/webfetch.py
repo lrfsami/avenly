@@ -34,6 +34,9 @@ logger = logging.getLogger(__name__)
 USER_AGENT = "avenly/0.1 (prospection alternance ; respecte robots.txt)"
 MAX_PAGE_BYTES = 2 * 1024 * 1024
 MAX_REDIRECTS = 3
+# Durée maximale pour lire une page, redirections comprises : un serveur qui envoie
+# quelques octets à la fois (volontairement ou non) ne peut pas nous bloquer indéfiniment.
+MAX_PAGE_SECONDS = 20.0
 ALLOWED_PORTS = {None, 80, 443}
 ALLOWED_TYPES = ("text/html", "application/xhtml+xml", "text/plain")
 PER_HOST_INTERVAL_SECONDS = 1.0
@@ -120,16 +123,34 @@ class SafeFetcher:
     ) -> None:
         self._settings = settings or get_settings()
         self._resolver = resolver
-        self._session = session or requests.Session()
-        self._session.headers.update(
-            {"User-Agent": USER_AGENT, "Accept": "text/html,application/xhtml+xml;q=0.9,text/plain;q=0.5"}
-        )
+        self._shared_session = session  # injectée par les tests
+        self._local = threading.local()
+        self._sessions: list[requests.Session] = []
         self._robots: dict[str, RobotFileParser | None] = {}
         self._last_call: dict[str, float] = {}
         self._lock = threading.Lock()
 
+    @property
+    def _session(self) -> requests.Session:
+        """Une session HTTP par thread : requests.Session n'est pas garanti thread-safe."""
+        if self._shared_session is not None:
+            return self._shared_session
+        session = getattr(self._local, "session", None)
+        if session is None:
+            session = requests.Session()
+            session.headers.update(
+                {"User-Agent": USER_AGENT, "Accept": "text/html,application/xhtml+xml;q=0.9,text/plain;q=0.5"}
+            )
+            self._local.session = session
+            with self._lock:
+                self._sessions.append(session)
+        return session
+
     def close(self) -> None:
-        self._session.close()
+        with self._lock:
+            for session in self._sessions:
+                session.close()
+            self._sessions.clear()
 
     # ------------------------------------------------------------------ politesse
 
@@ -167,13 +188,14 @@ class SafeFetcher:
         return self._get(url, check_robots=True)
 
     def _get(self, url: str, *, check_robots: bool) -> Page:
+        deadline = time.monotonic() + MAX_PAGE_SECONDS
         for _ in range(MAX_REDIRECTS + 1):
             host = check_url(url, self._resolver)
             self._wait_turn(host)
             try:
                 response = self._session.get(
                     url,
-                    timeout=(5, self._settings.http_timeout_seconds),
+                    timeout=(4, self._settings.http_timeout_seconds),
                     allow_redirects=False,
                     stream=True,
                 )
@@ -206,6 +228,8 @@ class SafeFetcher:
                     body.extend(chunk)
                     if len(body) > MAX_PAGE_BYTES:
                         raise FetchError("Page trop volumineuse.")
+                    if time.monotonic() > deadline:
+                        raise FetchError("Page trop lente à charger : abandon.")
                 text = _decode(bytes(body), response.encoding)
                 return Page(url=url, status=response.status_code, content_type=content_type, text=text)
 

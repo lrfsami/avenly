@@ -93,7 +93,13 @@ def db(tmp_path) -> Database:
 
 
 def acme(**extra) -> Company:
-    return Company(**({"client_id": "c", "siret": "12345678900011", "name": "ACME CONSEIL SAS"} | extra))
+    fields = {
+        "client_id": "c",
+        "siret": "12345678900011",
+        "name": "ACME CONSEIL SAS",
+        "address": "1 RUE X 69003 LYON",
+    }
+    return Company(**(fields | extra))
 
 
 # --------------------------------------------------------------------------
@@ -176,7 +182,8 @@ def test_obfuscated_emails_are_found():
 def test_guess_websites_tries_multi_word_domains_first(name, expected):
     guesses = guess_websites(name)
     assert guesses[:2] == expected
-    assert len(guesses) <= 6
+    assert len(guesses) <= 12
+    assert guesses.index("https://www." + expected[0].split(".")[1] + ".net") >= 2  # .fr/.com d'abord
 
 
 def test_one_word_of_the_name_is_not_enough():
@@ -189,10 +196,12 @@ def test_one_word_of_the_name_is_not_enough():
 
 
 def test_generic_words_are_ignored_in_title_check():
-    site = parse_html(
-        page("https://amaris.com", "<html><head><title>Amaris Consulting</title></head></html>")
+    """« FRANCE » est ignoré : seul « AMARIS » compte (avec la ville, car c'est un nom d'un seul mot)."""
+    html = "<html><head><title>Amaris Consulting</title></head><body>Bureaux à Lyon</body></html>"
+    site = parse_html(page("https://amaris.com", html))
+    amaris = Company(
+        client_id="c", siret="11122233300011", name="AMARIS FRANCE SAS", address="2 RUE Y 69002 LYON"
     )
-    amaris = Company(client_id="c", siret="11122233300011", name="AMARIS FRANCE SAS")
     assert site_matches_company([site], amaris)
 
 
@@ -306,3 +315,71 @@ def test_foreign_region_emails_are_ignored():
         "contact.france@acme.com",
         "contact@acme.com",
     ]
+
+
+@pytest.mark.parametrize(
+    ("final_url", "title", "ok"),
+    [
+        ("https://www.acme.fr/", "ACME - ESN", True),
+        ("https://www.hugedomains.com/domain_profile.cfm?d=acme.fr", "Acme.fr is for sale", False),
+        ("https://www.acme.fr/", "Ce nom de domaine est à vendre", False),
+    ],
+)
+def test_parked_or_redirected_guesses_are_rejected(final_url, title, ok):
+    from avenly.enricher import looks_like_real_site
+
+    home = ParsedPage(url=final_url, title=title, text="")
+    assert looks_like_real_site("https://www.acme.fr", home) is ok
+
+
+@pytest.mark.parametrize(
+    ("href", "label"),
+    [
+        ("/rejoignez-nous", "Rejoignez-nous"),
+        ("/travailler-chez-nous", "Travailler chez nous"),
+        ("/offres-d-emploi", "Nos offres"),
+        ("https://www.welcometothejungle.com/fr/companies/acme/jobs", "Nos offres"),
+        ("https://acme.teamtailor.com", "Jobs"),
+    ],
+)
+def test_careers_pages_are_found(href, label):
+    html = f'<html><body><a href="{href}">{label}</a></body></html>'
+    assert "careers" in find_key_pages(parse_html(page("https://www.acme.fr", html)))
+
+
+def test_external_non_ats_links_are_not_careers_pages():
+    html = '<html><body><a href="https://www.linkedin.com/company/acme/jobs">Jobs</a></body></html>'
+    assert "careers" not in find_key_pages(parse_html(page("https://www.acme.fr", html)))
+
+
+def test_one_word_name_needs_the_company_city():
+    """« BOKA » : le titre ne suffit pas, il faut aussi la ville ou le code postal de l'établissement."""
+    boka = Company(client_id="c", siret="11122233300011", name="BOKA", address="3 RUE X 74000 ANNECY")
+    elsewhere = parse_html(
+        page("https://www.boka.com", "<html><head><title>Boka</title></head><body>Paris</body></html>")
+    )
+    local = parse_html(
+        page("https://www.boka.fr", "<html><head><title>Boka</title></head><body>Annecy</body></html>")
+    )
+    by_postcode = parse_html(
+        page("https://boka.io", "<html><head><title>Boka</title></head><body>74000</body></html>")
+    )
+    assert not site_matches_company([elsewhere], boka)
+    assert site_matches_company([local], boka)
+    assert site_matches_company([by_postcode], boka)
+
+
+def test_blog_post_about_internships_is_not_a_careers_page():
+    html = '<html><body><a href="/blog/rapport-de-stage">Conclusion de rapport de stage</a></body></html>'
+    assert "careers" not in find_key_pages(parse_html(page("https://www.compilatio.net", html)))
+
+
+def test_time_budget_per_company(db, monkeypatch):
+    """Une fois le temps alloué à une entreprise épuisé, on n'ouvre plus de nouvelle page."""
+    from avenly import enricher as enricher_module
+
+    monkeypatch.setattr(enricher_module, "MAX_SECONDS_PER_COMPANY", -1)  # déjà épuisé
+    fetcher = FakeFetcher(SITE)
+    enrichment = Enricher(db, fetcher).enrich(acme(website="https://www.acme.fr"))
+    assert enrichment.status == "no_website"
+    assert fetcher.requested == []

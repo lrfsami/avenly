@@ -49,6 +49,9 @@ class FakeEnricher:
     def __init__(self, db, fetcher, *, llm=None):
         pass
 
+    def enrich_many(self, companies, *, workers=4):
+        return {c.siren: self.enrich(c) for c in companies}
+
     def enrich(self, company):
         return Enrichment(
             siren=company.siren,

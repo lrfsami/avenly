@@ -217,3 +217,15 @@ def test_latin1_page_without_charset_is_decoded():
     response = FakeResponse(body=body, headers={"Content-Type": "text/html"}, encoding="ISO-8859-1")
     fetcher, _ = make_fetcher({"https://www.acme.fr/": response})
     assert "Société" in fetcher.fetch("https://www.acme.fr/").text
+
+
+def test_slow_drip_server_cannot_block_us(monkeypatch):
+    """Un serveur qui envoie quelques octets à la fois (slowloris) : abandon après la durée maximale."""
+    clock = iter(range(0, 1000, 5))  # chaque lecture de l'horloge avance de 5 secondes
+    monkeypatch.setattr(webfetch.time, "monotonic", lambda: next(clock))
+    monkeypatch.setattr(webfetch, "MAX_PAGE_SECONDS", 20)
+    drip = FakeResponse(body=b"x" * 100)
+    drip.iter_content = lambda chunk_size: (b"x" for _ in range(1000))
+    fetcher, _ = make_fetcher({"https://www.acme.fr/": drip})
+    with pytest.raises(FetchError, match="trop lente"):
+        fetcher.fetch("https://www.acme.fr/")

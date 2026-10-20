@@ -35,6 +35,8 @@ ESTIMATED_COST_PROFILE = 0.002
 ESTIMATED_COST_PER_COMPANY = 0.012  # résumé du site (Haiku) + email (Sonnet)
 # On examine jusqu'à 5 fois plus d'entreprises que de brouillons voulus (certaines n'ont aucun canal).
 MAX_ATTEMPTS_FACTOR = 5
+# Nombre d'entreprises enrichies en même temps.
+ENRICH_BATCH = 4
 
 USER_ERRORS = (CVError, LLMError, SourcingError, ConfigError, SecurityError, ValueError)
 
@@ -98,23 +100,30 @@ def cmd_campagne(args: argparse.Namespace, *, out: TextIO, ask: Callable[[str], 
     writer = EmailWriter(db, llm, crypto)
     drafts = skipped = 0
     try:
-        for company in candidates:
+        # Enrichissement par lots, en parallèle ; rédaction une par une, jusqu'au maximum demandé.
+        for start in range(0, len(candidates), ENRICH_BATCH):
             if drafts >= args.max:
                 break
-            enrichment = enricher.enrich(company)
-            if not has_channel(company, enrichment):
-                skipped += 1
-                out.write(
-                    f"  ·  {company.name} : aucun email ni page carrières, ignorée (pas de rédaction)\n"
+            batch = candidates[start : start + ENRICH_BATCH]
+            enrichments = enricher.enrich_many(batch, workers=ENRICH_BATCH)
+            for company in batch:
+                if drafts >= args.max:
+                    break
+                enrichment = enrichments[company.siren]
+                if not has_channel(company, enrichment):
+                    skipped += 1
+                    out.write(
+                        f"  ·  {company.name} : aucun email ni page carrières, ignorée (pas de rédaction)\n"
+                    )
+                    continue
+                draft = writer.draft_one(
+                    profile, company, enrichment, context, signature, client_id=args.client
                 )
-                continue
-            draft = writer.draft_one(profile, company, enrichment, context, signature, client_id=args.client)
-            drafts += 1
-            out.write(
-                f"  [{drafts}/{args.max}] {company.name}  →  {draft.recipient_email or draft.careers_url}\n"
-            )
-            for warning in draft.warnings:
-                out.write(f"        ⚠️  {warning}\n")
+                drafts += 1
+                channel = draft.recipient_email or draft.careers_url
+                out.write(f"  [{drafts}/{args.max}] {company.name}  →  {channel}\n")
+                for warning in draft.warnings:
+                    out.write(f"        ⚠️  {warning}\n")
     finally:
         fetcher.close()
 

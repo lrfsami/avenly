@@ -15,8 +15,10 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 import unicodedata
 from collections.abc import Iterable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from urllib.parse import urljoin, urlsplit
 
@@ -31,7 +33,12 @@ from avenly.webfetch import FetchError, Page, SafeFetcher
 logger = logging.getLogger(__name__)
 
 MAX_PAGES_PER_SITE = 5
-MAX_GUESSED_SITES = 6
+# Temps maximal consacré à une entreprise (recherche du site + lecture des pages).
+MAX_SECONDS_PER_COMPANY = 60.0
+# Domaines devinés testés en même temps pour une entreprise.
+GUESS_WORKERS = 6
+MAX_GUESSED_SITES = 12
+GUESSED_TLDS = ("fr", "com", "net", "eu", "io")
 
 # --------------------------------------------------------------------------
 # Lecture du HTML
@@ -39,7 +46,9 @@ MAX_GUESSED_SITES = 6
 
 PAGE_KINDS: dict[str, re.Pattern[str]] = {
     "careers": re.compile(
-        r"carri[eè]re|career|recrut|emploi|jobs?\b|rejoind|join-us|nous-rejoindre|talent", re.I
+        r"carri[eè]re|career|recrut|emploi|jobs?\b|rejoi[ng]|join|talent|postuler|offres?[\s\-_]*d|"
+        r"travailler|work[\s\-_]*with|we[\s\-_]*are[\s\-_]*hiring",
+        re.I,
     ),
     "legal": re.compile(r"mentions[\s\-_]*l[ée]gales|legal|imprint|cgu", re.I),
     "about": re.compile(
@@ -83,12 +92,30 @@ def registrable_domain(url: str) -> str:
     return ".".join(host.split(".")[-2:])
 
 
+# Plateformes de recrutement où beaucoup d'entreprises publient leurs offres.
+ATS_DOMAINS = {
+    "welcometothejungle.com", "teamtailor.com", "lever.co", "greenhouse.io", "smartrecruiters.com",
+    "workable.com", "recruitee.com", "jobaffinity.fr", "flatchr.io", "talent-soft.com", "softy.pro",
+    "myworkdayjobs.com", "successfactors.com", "taleo.net", "hellowork.com", "jobteaser.com",
+}  # fmt: skip
+
+
 def find_key_pages(page: ParsedPage) -> dict[str, str]:
-    """Repère les liens vers les pages carrières, mentions légales, à propos et contact du même site."""
+    """Repère les pages carrières, mentions légales, à propos et contact.
+
+    Liens du même site uniquement, sauf pour les carrières : une page d'offres hébergée
+    sur une plateforme de recrutement connue (Welcome to the Jungle, Teamtailor…) est acceptée.
+    """
     domain = registrable_domain(page.url)
     found: dict[str, str] = {}
     for url, label in page.links:
-        if registrable_domain(url) != domain or url.rstrip("/") == page.url.rstrip("/"):
+        if url.rstrip("/") == page.url.rstrip("/"):
+            continue
+        link_domain = registrable_domain(url)
+        if link_domain in ATS_DOMAINS and "careers" not in found:
+            found["careers"] = url.split("#")[0]
+            continue
+        if link_domain != domain:
             continue
         haystack = f"{urlsplit(url).path} {label}"
         for kind, pattern in PAGE_KINDS.items():
@@ -168,11 +195,11 @@ def guess_websites(name: str) -> list[str]:
     if not words:
         return []
     stems = ["-".join(words[:2]), "".join(words[:2]), words[0]] if len(words) > 1 else [words[0]]
-    candidates: list[str] = []
-    for stem in dict.fromkeys(s for s in stems if len(s) >= 3):
-        for tld in ("fr", "com"):
-            candidates.append(f"https://www.{stem}.{tld}")
-    return candidates[:MAX_GUESSED_SITES]
+    stems = list(dict.fromkeys(s for s in stems if len(s) >= 3))
+    # D'abord .fr et .com pour toutes les variantes, puis les extensions plus rares.
+    common = [f"https://www.{stem}.{tld}" for stem in stems for tld in GUESSED_TLDS[:2]]
+    rare = [f"https://www.{stem}.{tld}" for stem in stems for tld in GUESSED_TLDS[2:]]
+    return (common + rare)[:MAX_GUESSED_SITES]
 
 
 # Mots trop génériques pour identifier une entreprise par son titre de page.
@@ -201,7 +228,36 @@ def site_matches_company(pages: Iterable[ParsedPage], company: Company) -> bool:
     if not words:
         return False
     title_words = set(_slug_words(" ".join(p.title for p in pages)))
-    return all(w in title_words for w in words[:3])
+    if not all(w in title_words for w in words[:3]):
+        return False
+    if len(words) >= 2:
+        return True
+    # Nom d'un seul mot (« BOKA ») : trop d'homonymes possibles. On exige en plus que le
+    # site mentionne la ville ou le code postal de l'établissement.
+    return _location_found(pages, company)
+
+
+def _location_found(pages: list[ParsedPage], company: Company) -> bool:
+    match = re.search(r"\b(\d{5})\s+([A-Za-zÀ-ÿ'’\- ]+)", company.address or "")
+    if not match:
+        return False
+    postcode, city = match.group(1), match.group(2).strip().split(" CEDEX")[0]
+    text = " ".join(_slug_words(" ".join(f"{p.title} {p.text}" for p in pages)))
+    return postcode in text or " ".join(_slug_words(city)) in text
+
+
+_PARKED = re.compile(
+    r"domain (?:name )?(?:is )?for sale|buy this domain|ce (?:nom de )?domaine est (?:à vendre|disponible)"
+    r"|parked (?:free|domain)|hugedomains|sedo|godaddy|domaine en vente",
+    re.I,
+)
+
+
+def looks_like_real_site(candidate_url: str, home: ParsedPage) -> bool:
+    """Écarte un domaine deviné qui redirige vers un autre site ou qui est une page « domaine à vendre »."""
+    if registrable_domain(home.url) != registrable_domain(candidate_url):
+        return False
+    return not _PARKED.search(f"{home.title} {home.text[:2000]}")
 
 
 # --------------------------------------------------------------------------
@@ -225,13 +281,17 @@ class Enricher:
         self._llm = llm
         self._settings = settings or get_settings()
 
-    def enrich_many(self, companies: Iterable[Company]) -> dict[str, Enrichment]:
-        """Un enrichissement par entreprise (SIREN). S'arrête net si le budget LLM est atteint."""
-        results: dict[str, Enrichment] = {}
-        for company in companies:
-            if company.siren not in results:
-                results[company.siren] = self.enrich(company)
-        return results
+    def enrich_many(self, companies: Iterable[Company], *, workers: int = 4) -> dict[str, Enrichment]:
+        """Un enrichissement par entreprise (SIREN), plusieurs entreprises EN PARALLÈLE.
+
+        Le rythme d'une requête par seconde reste garanti pour chaque site (SafeFetcher).
+        S'arrête net si le budget LLM est atteint.
+        """
+        unique = {c.siren: c for c in reversed(list(companies))}  # premier établissement par SIREN
+        ordered = list(reversed(unique.values()))
+        with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
+            results = list(pool.map(self.enrich, ordered))
+        return {company.siren: enrichment for company, enrichment in zip(ordered, results, strict=True)}
 
     def enrich(self, company: Company) -> Enrichment:
         cached = self._db.get_enrichment(company.siren, max_age_days=self._settings.enrichment_cache_days)
@@ -243,7 +303,9 @@ class Enricher:
 
     # ------------------------------------------------------------------ étapes
 
-    def _read(self, url: str) -> ParsedPage | None:
+    def _read(self, url: str, deadline: float) -> ParsedPage | None:
+        if time.monotonic() > deadline:
+            return None  # temps alloué à cette entreprise épuisé
         try:
             page = self._fetcher.fetch(url)
         except FetchError as exc:
@@ -253,27 +315,44 @@ class Enricher:
             return None
         return parse_html(page)
 
-    def _find_home(self, company: Company) -> tuple[ParsedPage | None, bool]:
+    def _verified_home(self, candidate: str, company: Company, deadline: float) -> ParsedPage | None:
+        """Lit un domaine deviné et le garde seulement s'il est bien celui de l'entreprise."""
+        home = self._read(candidate, deadline)
+        if home is None or not looks_like_real_site(candidate, home):
+            return None
+        if site_matches_company([home], company):
+            return home
+        # Le SIREN figure le plus souvent dans les mentions légales.
+        legal_url = find_key_pages(home).get("legal")
+        legal = self._read(legal_url, deadline) if legal_url else None
+        if legal is not None and site_matches_company([home, legal], company):
+            return home
+        return None
+
+    def _find_home(self, company: Company, deadline: float) -> tuple[ParsedPage | None, bool]:
         """Renvoie (page d'accueil, site vérifié ?)."""
         if company.website:
-            home = self._read(company.website)
+            home = self._read(company.website, deadline)
             if home is not None:
                 return home, True  # site déclaré par l'entreprise elle-même (La Bonne Alternance)
-        for candidate in guess_websites(company.name):
-            home = self._read(candidate)
-            if home is None:
-                continue
-            if site_matches_company([home], company):
-                return home, True
-            # Le SIREN figure le plus souvent dans les mentions légales.
-            legal_url = find_key_pages(home).get("legal")
-            legal = self._read(legal_url) if legal_url else None
-            if legal is not None and site_matches_company([home, legal], company):
-                return home, True
+        candidates = guess_websites(company.name)
+        if not candidates:
+            return None, False
+        # Les domaines devinés sont testés EN PARALLÈLE (un domaine lent ne bloque plus les autres),
+        # puis on garde le premier vérifié dans l'ordre de priorité.
+        with ThreadPoolExecutor(max_workers=min(len(candidates), GUESS_WORKERS)) as pool:
+            futures = [pool.submit(self._verified_home, c, company, deadline) for c in candidates]
+            for future in futures:
+                home = future.result()
+                if home is not None:
+                    for other in futures:
+                        other.cancel()
+                    return home, True
         return None, False
 
     def _enrich_uncached(self, company: Company) -> Enrichment:
-        home, verified = self._find_home(company)
+        deadline = time.monotonic() + MAX_SECONDS_PER_COMPANY
+        home, verified = self._find_home(company, deadline)
         if home is None:
             return Enrichment(siren=company.siren, status="no_website")
 
@@ -282,7 +361,7 @@ class Enricher:
         for kind in VISIT_ORDER:
             if len(pages) >= MAX_PAGES_PER_SITE:
                 break
-            if kind in key_pages and (parsed := self._read(key_pages[kind])) is not None:
+            if kind in key_pages and (parsed := self._read(key_pages[kind], deadline)) is not None:
                 pages.append(parsed)
 
         site_domain = registrable_domain(home.url)
